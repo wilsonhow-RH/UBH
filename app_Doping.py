@@ -17,7 +17,7 @@ st.markdown("Explore the topology, geometry, scattering, local doping level and 
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
-        if st.session_state["password"] == "physics2026": # Change your password here
+        if st.session_state["password"] == "physics2026": 
             st.session_state["password_correct"] = True
             del st.session_state["password"]  
         else:
@@ -121,7 +121,7 @@ def get_hex_G(a, theta_deg):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay):
+def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
     current_fov = base_grid * zoom_factor
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 6.5), dpi=100)
     fig.patch.set_facecolor('#1a1a1a')
@@ -130,8 +130,9 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
-        # Annotate twist angle in the upper left corner outside the image boundary
-        ax.text(0.0, 1.05, f"Twist Angle: {theta_deg:.1f}°", transform=ax.transAxes, color='#ffcc00', fontsize=12, fontweight='bold', ha='left')
+        # Only add the twist angle overlay if we are generating a video frame
+        if is_video_frame:
+            ax.text(0.0, 1.05, f"Twist Angle: {theta_deg:.1f}°", transform=ax.transAxes, color='#ffcc00', fontsize=12, fontweight='bold', ha='left')
     
     th = np.radians(theta_deg)
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
@@ -191,7 +192,28 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_bise, 0.0), get_hex_G(a_mos2, theta_deg)
 
-    else:
+    # FIXED: Restored dedicated Graphene vs MATBG logic
+    elif 'Graphene' in system_mode:
+        title_str, decay_L = r"1ML MoS$_2$ on Graphene", 0.25 * a_g 
+        label1, label2 = r"Layer 1 (Graphene)", r"Layer 2 (MoS$_2$)"
+        
+        mask_sub = (np.abs(pts_grap_base[:, 0]) < current_fov) & (np.abs(pts_grap_base[:, 1]) < current_fov)
+        vis_base = pts_grap_base[mask_sub]
+        mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
+        vis_top = pts_mos2_base[mask_top].dot(R.T)
+        
+        f = vis_top.dot(invV_g.T)
+        dist_co = min_hex_dist(f, V_g)
+        dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_g), min_hex_dist(f - np.array([2/3, 2/3]), V_g))
+        dist_br = np.minimum(np.minimum(min_hex_dist(f - np.array([0.5, 0.0]), V_g), min_hex_dist(f - np.array([0.0, 0.5]), V_g)), min_hex_dist(f - np.array([0.5, -0.5]), V_g))
+        
+        score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
+
+        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_mos2, theta_deg)
+
+    else: # MATBG
         title_str, decay_L = "Magic-Angle Twisted Bilayer Graphene", 0.25 * a_g
         label1, label2 = "Layer 1 (Graphene)", "Layer 2 (Rotated)"
         
@@ -291,7 +313,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         lr = 0.05 
         A_elec = 0.5 * (w2 - w1)**2 
         
-        show_bar = not hasattr(st.session_state, 'is_rendering_video') or not st.session_state.is_rendering_video
+        show_bar = not is_video_frame
         if show_bar:
             my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
             
@@ -472,8 +494,8 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# Render the Plot AFTER all UI elements are defined
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
+# FIXED: Render the Plot ONLY ONCE after all UI elements are defined
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
 st.pyplot(fig)
 
 
@@ -487,9 +509,8 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     
     frames = []
     for ang in range(46):
-        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
+        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
-        # Streamlit-Cloud safe RGB buffer extraction
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
         img = img_rgba[:, :, :3] 
@@ -504,12 +525,17 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     st.session_state.is_rendering_video = False
     
     st.success("Video Generated Successfully!")
-    st.video("moire_twist_scan.mp4", autoplay=True, loop=True)
     
+    # FIXED: Save video bytes to session state so it survives UI reloads
     with open("moire_twist_scan.mp4", "rb") as file:
-        st.download_button(
-            label="💾 Save Video to Computer",
-            data=file,
-            file_name=f"twist_scan_{system_mode[:4]}.mp4",
-            mime="video/mp4"
-        )
+        st.session_state.video_bytes = file.read()
+
+# Render video persistently if it exists in memory
+if "video_bytes" in st.session_state:
+    st.video(st.session_state.video_bytes, autoplay=True, loop=True)
+    st.download_button(
+        label="💾 Save Video to Computer",
+        data=st.session_state.video_bytes,
+        file_name=f"twist_scan_{system_mode[:4]}.mp4",
+        mime="video/mp4"
+    )
