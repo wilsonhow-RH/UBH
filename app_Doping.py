@@ -141,7 +141,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     fig.patch.set_facecolor('#1a1a1a')
     
     if is_video_frame:
-        fig.text(0.02, 0.92, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=18, fontweight='bold', ha='left')
+        # Repositioned and shrunk video text to avoid interfering with panel title
+        fig.text(0.01, 0.98, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
     ax1 = fig.add_subplot(131)
     ax2 = fig.add_subplot(132)
@@ -315,7 +316,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # PAD-AND-CROP MESOSCOPIC ENVELOPES (Fixes Image Edge Artifacts)
+        # DYNAMIC HALF-MAX MESOSCOPIC ENVELOPES
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -327,19 +328,18 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
                     
             elif boundary_mode == "Mesoscopic (Envelope)":
-                # Compute on a 20% padded grid to prevent edge pile-ups during binning
                 pad_fov = current_fov * 1.2
                 N_pad = int(N_den * 1.2)
                 dx = (pad_fov * 2) / N_pad
                 
-                # Exclude atoms outside the padded FOV
                 valid_mask = (np.abs(vis_top[:, 0]) < pad_fov) & (np.abs(vis_top[:, 1]) < pad_fov)
                 vt_pad = vis_top[valid_mask]
                 
                 ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 
-                radius = int(np.ceil(max(2.0, (a_mos2 * 1.5) / dx)))
+                # Minimum integer radius to bridge adjacent atomic points tightly
+                radius = int(np.ceil((a_mos2 * 1.1) / dx))
                 
                 x_pad = np.linspace(-pad_fov, pad_fov, N_pad)
                 y_pad = np.linspace(-pad_fov, pad_fov, N_pad)
@@ -352,11 +352,26 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
                     grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/2.0)
                     
-                    if np.max(grid_z_meso) > 1e-5:
-                        grid_z_meso = grid_z_meso / np.max(grid_z_meso)
-                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                    z_min = np.min(grid_z_meso)
+                    z_max = np.max(grid_z_meso)
+                    
+                    # Dynamic Half-Max contouring isolates boundaries regardless of baseline blur shifts
+                    if (z_max - z_min) > 1e-5:
+                        dynamic_level = z_min + (z_max - z_min) * 0.5
+                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[dynamic_level], colors=color, linewidths=1.5, linestyles='solid')
+
+    # Ensure identical panel size by enforcing a fully invisible colorbar layout on Panel 1
+    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
+    sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
+    sm._A = []
+    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    cbar1.outline.set_visible(False)
+    cbar1.ax.tick_params(colors='none') 
+    for spine in cbar1.ax.spines.values():
+        spine.set_visible(False)
+    cbar1.set_ticks([])
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -579,7 +594,6 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     FigureCanvasAgg(video_fig)
     
     for ang in range(max_t_int + 1):
-        # FIX: The progress bar is now correctly updated inside the loop
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
         fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
@@ -587,7 +601,6 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
         
-        # FIX: .copy() prevents Matplotlib from overwriting the memory buffer of previous frames
         img = img_rgba[:, :, :3].copy() 
         frames.append(img)
         
