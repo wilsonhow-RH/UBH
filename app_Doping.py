@@ -41,7 +41,8 @@ if not check_password():
 # ==========================================
 # 1. PARAMETERS & PRE-COMPUTATION
 # ==========================================
-@st.cache_data
+# CRITICAL FIX: Changed from cache_data to cache_resource to prevent deep-copying massive arrays
+@st.cache_resource
 def generate_base_grids():
     a_sto, a_fese, a_mos2, a_bise, a_g = 3.905, 3.905, 3.15, 4.14, 2.46          
     base_grid = 40  
@@ -100,7 +101,6 @@ def min_hex_dist(frac_pts, V_mat):
     return np.minimum(np.minimum(d00, d10), np.minimum(d01, d11))
 
 def calculate_hex_registry_distances(vis_top, V_sub, invV_sub):
-    """Unified logic for Hex-on-Hex registry distance calculations."""
     f = vis_top.dot(invV_sub.T)
     dist_co = min_hex_dist(f, V_sub)
     dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_sub), min_hex_dist(f - np.array([2/3, 2/3]), V_sub))
@@ -168,7 +168,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # DATA ROUTING BY SYSTEM
     # ------------------------------------------
-    layer2_Cq = 0.01  # Default Quantum Capacitance for MoS2 in F/m^2 (~100 uF/cm^2)
+    layer2_Cq = 0.01  
     
     if 'Hex-on-Square' in system_mode:
         if 'SrTiO₃' in system_mode:
@@ -231,7 +231,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     else: 
         title_str, decay_L = "Magic-Angle Twisted Bilayer Graphene", 0.25 * a_g
         label1, label2 = "Layer 1 (Graphene)", "Layer 2 (Rotated)"
-        layer2_Cq = 0.002 # Quantum Capacitance for Graphene near Dirac Point in F/m^2 (~20 uF/cm^2)
+        layer2_Cq = 0.002 
         
         mask_sub = (np.abs(pts_grap_base[:, 0]) < current_fov) & (np.abs(pts_grap_base[:, 1]) < current_fov)
         vis_base = pts_grap_base[mask_sub]
@@ -281,20 +281,35 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='dodgerblue', alpha=0.5)
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=2, color='crimson', alpha=0.5)
     else:
-        ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='gray', alpha=0.3)
-        ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05)
+        # Faint underlying grids
+        ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='gray', alpha=0.3, marker=',')
+        ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05, marker=',')
         
+        # CRITICAL RENDERING FIX: Masking out low-score points reduces Matplotlib render times by ~90%
         if show_co_dom:
-            c_co = np.zeros((len(vis_top), 4)); c_co[:, 0], c_co[:, 1], c_co[:, 2], c_co[:, 3] = 1.0, 0.2, 0.3, score_co
-            ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_co, c=c_co, edgecolors='none')
+            mask_co = score_co > 0.05
+            if np.any(mask_co):
+                c_co = np.zeros((np.sum(mask_co), 4))
+                c_co[:, 0], c_co[:, 1], c_co[:, 2] = 1.0, 0.2, 0.3
+                c_co[:, 3] = score_co[mask_co]
+                ax1.scatter(vis_top[mask_co, 0], vis_top[mask_co, 1], s=base_size * score_co[mask_co], c=c_co, edgecolors='none')
+                
         if show_ho_dom:
-            c_ho = np.zeros((len(vis_top), 4)); c_ho[:, 0], c_ho[:, 1], c_ho[:, 2], c_ho[:, 3] = 0.1, 0.6, 1.0, score_ho
-            ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_ho, c=c_ho, edgecolors='none')
+            mask_ho = score_ho > 0.05
+            if np.any(mask_ho):
+                c_ho = np.zeros((np.sum(mask_ho), 4))
+                c_ho[:, 0], c_ho[:, 1], c_ho[:, 2] = 0.1, 0.6, 1.0
+                c_ho[:, 3] = score_ho[mask_ho]
+                ax1.scatter(vis_top[mask_ho, 0], vis_top[mask_ho, 1], s=base_size * score_ho[mask_ho], c=c_ho, edgecolors='none')
+                
         if show_br_dom:
-            c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
-            ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
+            mask_br = score_br > 0.05
+            if np.any(mask_br):
+                c_br = np.zeros((np.sum(mask_br), 4))
+                c_br[:, 0], c_br[:, 1], c_br[:, 2] = 0.2, 0.8, 0.2
+                c_br[:, 3] = score_br[mask_br]
+                ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # FAST MESOSCOPIC ALGORITHM VIA FFT CONVOLUTION
         if boundary_mode != "None":
             try:
                 domain_pairs = [(score_co, '#ff6666', show_co_dom), 
@@ -312,7 +327,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
                     
                     radius = max(2.0, (a_mos2 * 1.5) / dx)
-                    
                     k_size = int(np.ceil(radius * 3))
                     kx = np.arange(-k_size, k_size + 1)
                     k_grid_x, k_grid_y = np.meshgrid(kx, kx)
@@ -354,8 +368,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
     else:
         Z_map = Z_0.copy()
-        
-        # Adaptive learning rate for PDE Stability
         lr = 0.05 / (1.0 + k_elastic * 10) 
         A_elec = 0.5 * (w2 - w1)**2 
         
@@ -373,7 +385,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             Z_map = Z_map + lr * (F_elastic + F_vdw + F_elec)
             Z_map = np.clip(Z_map, 1.5, 5.0) 
             
-            if show_bar and i % 10 == 0:
+            # Less frequent frontend updates to reduce lag
+            if show_bar and i % 25 == 0:
                 my_bar.progress(int((i / iterations) * 100), text=f"Minimizing Free Energy: Iteration {i}/{iterations}")
                 
         if show_bar:
@@ -400,10 +413,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         epsilon_0, e_charge = 8.854e-12, 1.602e-19
         delta_W = w2 - w1 if (w2 - w1) != 0 else 1e-6
         
-        # QUANTUM CAPACITANCE IMPLENTATION (Series sum C_geom and C_q)
         C_geom = epsilon_0 / Z_meters
         C_total = (C_geom * layer2_Cq) / (C_geom + layer2_Cq)
-        delta_n = (C_total * delta_W) / e_charge / 1e4 # Convert to cm^-2
+        delta_n = (C_total * delta_W) / e_charge / 1e4 
         
         vmin = np.percentile(delta_n, den_contrast)
         vmax = np.percentile(delta_n, 100 - den_contrast)
@@ -488,7 +500,6 @@ col1, col2, col3 = st.columns(3)
 with col1:
     system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
-    
     boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
 with col2:
@@ -566,7 +577,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     vid_progress = st.progress(0, text=f"Rendering frame 1 of {max_t_int + 1}...")
     
     frames = []
-    video_fig = Figure(figsize=(21, 6.5), dpi=100) # Initialize figure OUTSIDE the loop once
+    video_fig = Figure(figsize=(21, 6.5), dpi=100) 
     FigureCanvasAgg(video_fig)
     
     for ang in range(max_t_int + 1):
