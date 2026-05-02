@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import matplotlib.lines as mlines
+import matplotlib.tri as mtri
 import scipy.ndimage as ndimage
 import time
 import imageio
@@ -122,7 +123,7 @@ def get_hex_G(a, theta_deg):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay):
+def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay):
     current_fov = base_grid * zoom_factor
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 6.5), dpi=100)
     fig.patch.set_facecolor('#1a1a1a')
@@ -229,7 +230,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
     cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
 
     # ------------------------------------------
-    # PANEL 1: REGISTRY DOMAINS
+    # PANEL 1: REGISTRY DOMAINS & BOUNDARIES
     # ------------------------------------------
     ax1.set_xlim(-current_fov, current_fov)
     ax1.set_ylim(-current_fov, current_fov)
@@ -245,6 +246,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05)
         show_all, show_clean = (view_mode == 'Show All Registries'), (view_mode == 'Coincident + Hollow')
         
+        # Plot Scatter Domains
         if show_all or show_clean or view_mode == 'Coincident Only':
             c_co = np.zeros((len(vis_top), 4)); c_co[:, 0], c_co[:, 1], c_co[:, 2], c_co[:, 3] = 1.0, 0.2, 0.3, score_co
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_co, c=c_co, edgecolors='none')
@@ -254,6 +256,19 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
         if show_all or view_mode == 'Bridge Only':
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
+
+        # NEW: Draw 50% Fall-off Contour Boundaries via Triangulation
+        if show_boundaries:
+            try:
+                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
+                if show_all or show_clean or view_mode == 'Coincident Only':
+                    ax1.tricontour(triang, score_co, levels=[0.5], colors='#ff6666', linewidths=1.5, linestyles='solid')
+                if show_all or show_clean or view_mode == 'Hollow Only':
+                    ax1.tricontour(triang, score_ho, levels=[0.5], colors='#66b3ff', linewidths=1.5, linestyles='solid')
+                if show_all or view_mode == 'Bridge Only':
+                    ax1.tricontour(triang, score_br, levels=[0.5], colors='#66ff66', linewidths=1.5, linestyles='solid')
+            except Exception:
+                pass # Fail silently if zoom is too extreme for triangulation
 
     sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
@@ -278,7 +293,6 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
         lr = 0.05 
         A_elec = 0.5 * (w2 - w1)**2 
         
-        # Don't show progress bar during video generation to avoid UI clutter
         show_bar = not hasattr(st.session_state, 'is_rendering_video') or not st.session_state.is_rendering_video
         if show_bar:
             my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
@@ -400,6 +414,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
+    show_boundaries = st.checkbox("Show Domain Boundaries (50% Fall-off)", value=False)
 
 with col2:
     mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
@@ -412,7 +427,7 @@ with col3:
     den_contrast = st.slider("Contrast Clip (%):", 0.0, 20.0, 0.0, 1.0)
 
 # Render the Plot
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, "Rigid Lattices (No Relaxation)", 4.2, 4.5, 3.1, 3.6, 0.0, 0.0, 80.0, 0.5) # Defaults overridden below if expanded
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, "Rigid Lattices (No Relaxation)", 4.2, 4.5, 3.1, 3.6, 0.0, 0.0, 80.0, 0.5) 
 
 # --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
@@ -463,7 +478,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
 # Re-render plot with proper params if they were modified in the expander
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
 st.pyplot(fig)
 
 
@@ -477,16 +492,15 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     
     frames = []
     for ang in range(46):
-        # Generate the frame invisibly
-        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
+        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
         
-        # Convert Matplotlib figure to a pixel array
+        # FIXED: Streamlit-Cloud safe RGB buffer extraction
         fig_frame.canvas.draw()
-        img = np.frombuffer(fig_frame.canvas.tostring_rgb(), dtype='uint8')
-        img = img.reshape(fig_frame.canvas.get_width_height()[::-1] + (3,))
+        img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
+        img = img_rgba[:, :, :3] # Slice out the Alpha channel to get pure RGB
         frames.append(img)
-        plt.close(fig_frame) # Clean up memory
         
+        plt.close(fig_frame) 
         vid_progress.progress(int((ang + 1) / 46 * 100), text=f"Rendering frame {ang+1} of 46...")
     
     vid_progress.progress(100, text="Encoding MP4 Video...")
@@ -495,11 +509,8 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     st.session_state.is_rendering_video = False
     
     st.success("Video Generated Successfully!")
-    
-    # Auto-play loop in full width
     st.video("moire_twist_scan.mp4", autoplay=True, loop=True)
     
-    # Download Button
     with open("moire_twist_scan.mp4", "rb") as file:
         st.download_button(
             label="💾 Save Video to Computer",
