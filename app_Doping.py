@@ -315,7 +315,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # RESTORED DIRECT MATRIX BINNING METHOD FOR MESOSCOPIC ENVELOPES
+        # PAD-AND-CROP MESOSCOPIC ENVELOPES (Fixes Image Edge Artifacts)
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -327,25 +327,36 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
                     
             elif boundary_mode == "Mesoscopic (Envelope)":
-                dx = (current_fov * 2) / N_den
-                ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
-                iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
+                # Compute on a 20% padded grid to prevent edge pile-ups during binning
+                pad_fov = current_fov * 1.2
+                N_pad = int(N_den * 1.2)
+                dx = (pad_fov * 2) / N_pad
                 
-                # Minimum integer radius to bridge adjacent atomic points
+                # Exclude atoms outside the padded FOV
+                valid_mask = (np.abs(vis_top[:, 0]) < pad_fov) & (np.abs(vis_top[:, 1]) < pad_fov)
+                vt_pad = vis_top[valid_mask]
+                
+                ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
+                iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
+                
                 radius = int(np.ceil(max(2.0, (a_mos2 * 1.5) / dx)))
+                
+                x_pad = np.linspace(-pad_fov, pad_fov, N_pad)
+                y_pad = np.linspace(-pad_fov, pad_fov, N_pad)
+                X_pad, Y_pad = np.meshgrid(x_pad, y_pad)
                 
                 for score, color, is_shown in domain_pairs:
                     if not is_shown: continue
-                    grid_z = np.zeros((N_den, N_den))
-                    np.maximum.at(grid_z, (iy, ix), score) 
+                    sc_pad = score[valid_mask]
+                    grid_z = np.zeros((N_pad, N_pad))
+                    np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
-                    # Morphological Dilation bridges the gaps, Gaussian smooths the edges
                     grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
                     grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
                     
                     if np.max(grid_z_meso) > 1e-5:
                         grid_z_meso = grid_z_meso / np.max(grid_z_meso)
-                        ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -568,11 +579,16 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     FigureCanvasAgg(video_fig)
     
     for ang in range(max_t_int + 1):
+        # FIX: The progress bar is now correctly updated inside the loop
+        vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
+        
         fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
-        img = img_rgba[:, :, :3] 
+        
+        # FIX: .copy() prevents Matplotlib from overwriting the memory buffer of previous frames
+        img = img_rgba[:, :, :3].copy() 
         frames.append(img)
         
     vid_progress.progress(100, text="Encoding MP4 Video...")
