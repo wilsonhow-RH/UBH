@@ -34,26 +34,28 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX ---
+# --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX (FIXED) ---
 def synced_input(label, min_val, max_val, default_val, step, key):
-    # Initialize the shared value in session state
-    if f"{key}_val" not in st.session_state:
-        st.session_state[f"{key}_val"] = float(default_val)
+    # Initialize keys if they don't exist
+    if f"{key}_slider" not in st.session_state:
+        st.session_state[f"{key}_slider"] = float(default_val)
+    if f"{key}_num" not in st.session_state:
+        st.session_state[f"{key}_num"] = float(default_val)
 
-    # Callbacks to keep both widgets perfectly in sync
-    def update_from_slider():
-        st.session_state[f"{key}_val"] = st.session_state[f"{key}_slider"]
-    def update_from_num():
-        st.session_state[f"{key}_val"] = st.session_state[f"{key}_num"]
+    # Cross-bind the callbacks so they update each other directly
+    def sync_from_slider():
+        st.session_state[f"{key}_num"] = st.session_state[f"{key}_slider"]
+    def sync_from_num():
+        st.session_state[f"{key}_slider"] = st.session_state[f"{key}_num"]
 
     st.markdown(f"<p style='font-size:14px; margin-bottom:-10px; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
     c1, c2 = st.columns([4, 1])
     with c1:
-        st.slider(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_slider", on_change=update_from_slider, label_visibility="collapsed")
+        st.slider(label, min_value=float(min_val), max_value=float(max_val), step=float(step), key=f"{key}_slider", on_change=sync_from_slider, label_visibility="collapsed")
     with c2:
-        st.number_input(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_num", on_change=update_from_num, label_visibility="collapsed")
+        st.number_input(label, min_value=float(min_val), max_value=float(max_val), step=float(step), key=f"{key}_num", on_change=sync_from_num, label_visibility="collapsed")
         
-    return st.session_state[f"{key}_val"]
+    return st.session_state[f"{key}_slider"]
 
 # ==========================================
 # 1. PARAMETERS & PRE-COMPUTATION
@@ -168,7 +170,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     base_size = max(5, 50 / (zoom_factor ** 0.5))
 
-    N_den = 300
+    N_den = 256
     x_den = np.linspace(-current_fov, current_fov, N_den)
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
@@ -311,44 +313,46 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        # Domain Boundary Architecture
         if boundary_mode != "None":
             try:
-                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
                 domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                                 (score_ho, '#66b3ff', show_ho_dom), 
                                 (score_br, '#66ff66', show_br_dom)]
                 
-                for score, color, is_shown in domain_pairs:
-                    if not is_shown: continue
+                if boundary_mode == "Microscopic (Atomic)":
+                    triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
+                    for score, color, is_shown in domain_pairs:
+                        if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                        
+                elif boundary_mode == "Mesoscopic (Envelope)":
+                    dx = (current_fov * 2) / N_den
+                    ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
+                    iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
                     
-                    if boundary_mode == "Microscopic (Atomic)":
-                        ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                    radius = int(max(2.0, (a_mos2 * 1.5) / dx))
+                    
+                    for score, color, is_shown in domain_pairs:
+                        if not is_shown: continue
+                        grid_z = np.zeros((N_den, N_den))
+                        np.maximum.at(grid_z, (iy, ix), score) 
                         
-                    elif boundary_mode == "Mesoscopic (Envelope)":
-                        # 1. Map discrete atomic scores to dense spatial grid
-                        interp = mtri.LinearTriInterpolator(triang, score)
-                        grid_z = interp(X_den, Y_den)
-                        grid_z = np.ma.filled(grid_z, fill_value=0.0) 
-                        
-                        # 2. Maximum Filter (Dilation): Bridges the atomic gaps without losing peak intensity
-                        dx = (current_fov * 2) / N_den
-                        radius = int(max(1.0, (a_mos2 * 1.0) / dx))
                         grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                        
-                        # 3. Mild Gaussian smoothing to round out the dilated envelope edges
                         grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
                         
-                        ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                        if np.max(grid_z_meso) > 1e-5:
+                            grid_z_meso = grid_z_meso / np.max(grid_z_meso)
+                            ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
             except Exception:
                 pass 
 
-    # FIXED: Phantom colorbar label to ensure Matplotlib's tight_layout matches all 3 panels exactly
+    # FIXED: Make the colorbar completely transparent instead of invisible, so Matplotlib calculates identical padding
     sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
     cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-    cbar1.ax.set_visible(False)
-    cbar1.set_label('Invisible Text Placeholder to Match', color='#1a1a1a') # Blends into dark background
+    cbar1.outline.set_visible(False)
+    cbar1.ax.tick_params(colors='none') 
+    cbar1.set_label('                               ', color='none') 
+    cbar1.patch.set_alpha(0.0) 
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -372,7 +376,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         if show_bar:
             my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
             
-        iterations = 120
+        iterations = 120 if is_video_frame else 50
         for i in range(iterations):
             laplacian = ndimage.laplace(Z_map)
             F_elastic = k_elastic * laplacian
