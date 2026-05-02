@@ -315,52 +315,37 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # NEW CONTINUOUS ANALYTICAL MESOSCOPIC BOUNDARIES
+        # RESTORED DIRECT MATRIX BINNING METHOD FOR MESOSCOPIC ENVELOPES
         if boundary_mode != "None":
+            domain_pairs = [(score_co, '#ff6666', show_co_dom), 
+                            (score_ho, '#66b3ff', show_ho_dom), 
+                            (score_br, '#66ff66', show_br_dom)]
+            
             if boundary_mode == "Microscopic (Atomic)":
                 triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
-                domain_pairs = [(score_co, '#ff6666', show_co_dom), 
-                                (score_ho, '#66b3ff', show_ho_dom), 
-                                (score_br, '#66ff66', show_br_dom)]
                 for score, color, is_shown in domain_pairs:
                     if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
                     
             elif boundary_mode == "Mesoscopic (Envelope)":
-                if 'Hex-on-Square' in system_mode:
-                    nx_g = np.round(X_den / a_sub) * a_sub
-                    ny_g = np.round(Y_den / a_sub) * a_sub
-                    dist_co_g = np.sqrt((X_den - nx_g)**2 + (Y_den - ny_g)**2)
-
-                    cx_g = np.floor(X_den / a_sub) * a_sub + a_sub/2
-                    cy_g = np.floor(Y_den / a_sub) * a_sub + a_sub/2
-                    dist_ho_g = np.sqrt((X_den - cx_g)**2 + (Y_den - cy_g)**2)
-
-                    dist_br_g = np.minimum(np.sqrt((X_den - cx_g)**2 + (Y_den - ny_g)**2), np.sqrt((X_den - nx_g)**2 + (Y_den - cy_g)**2))
-                else:
-                    f_g = np.stack([X_den.ravel(), Y_den.ravel()], axis=1).dot(invV_sub.T)
-                    dist_co_g = min_hex_dist(f_g, V_sub).reshape(X_den.shape)
-                    dist_ho_g = np.minimum(min_hex_dist(f_g - np.array([1/3, 1/3]), V_sub), min_hex_dist(f_g - np.array([2/3, 2/3]), V_sub)).reshape(X_den.shape)
-                    dist_br_g = np.minimum(np.minimum(min_hex_dist(f_g - np.array([0.5, 0.0]), V_sub), min_hex_dist(f_g - np.array([0.0, 0.5]), V_sub)), min_hex_dist(f_g - np.array([0.5, -0.5]), V_sub)).reshape(X_den.shape)
-
-                score_co_g = np.exp(-(dist_co_g/decay_L)**2)
-                score_ho_g = np.exp(-(dist_ho_g/(decay_L*1.3))**2)
-                score_br_g = np.exp(-(dist_br_g/(decay_L*0.8))**2)
-
-                domain_pairs_g = [(score_co_g, '#ff6666', show_co_dom),
-                                  (score_ho_g, '#66b3ff', show_ho_dom),
-                                  (score_br_g, '#66ff66', show_br_dom)]
-
-                for score_g, color, is_shown in domain_pairs_g:
-                    if is_shown:
-                        ax1.contour(X_den, Y_den, score_g, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
-
-    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
-    sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
-    sm._A = []
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-    cbar1.outline.set_visible(False)
-    cbar1.set_ticks([])
-    cbar1.set_label('Invisible Text Placeholder', color='#1a1a1a')
+                dx = (current_fov * 2) / N_den
+                ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
+                iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
+                
+                # Minimum integer radius to bridge adjacent atomic points
+                radius = int(np.ceil(max(2.0, (a_mos2 * 1.5) / dx)))
+                
+                for score, color, is_shown in domain_pairs:
+                    if not is_shown: continue
+                    grid_z = np.zeros((N_den, N_den))
+                    np.maximum.at(grid_z, (iy, ix), score) 
+                    
+                    # Morphological Dilation bridges the gaps, Gaussian smooths the edges
+                    grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
+                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                    
+                    if np.max(grid_z_meso) > 1e-5:
+                        grid_z_meso = grid_z_meso / np.max(grid_z_meso)
+                        ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
