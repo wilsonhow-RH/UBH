@@ -9,6 +9,7 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
+import scipy.signal as signal
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -83,7 +84,7 @@ def generate_base_grids():
     
     return pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d
 
-pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = generate_base_grids()
+cached_data = generate_base_grids()
 a_sto, a_fese, a_mos2, a_bise, a_g = 3.905, 3.905, 3.15, 4.14, 2.46
 base_grid = 40  
 
@@ -97,6 +98,14 @@ def min_hex_dist(frac_pts, V_mat):
     d01 = np.linalg.norm((frac_pts - (f_floor + np.array([0, 1]))).dot(V_mat.T), axis=1)
     d11 = np.linalg.norm((frac_pts - (f_floor + np.array([1, 1]))).dot(V_mat.T), axis=1)
     return np.minimum(np.minimum(d00, d10), np.minimum(d01, d11))
+
+def calculate_hex_registry_distances(vis_top, V_sub, invV_sub):
+    """Unified logic for Hex-on-Hex registry distance calculations."""
+    f = vis_top.dot(invV_sub.T)
+    dist_co = min_hex_dist(f, V_sub)
+    dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_sub), min_hex_dist(f - np.array([2/3, 2/3]), V_sub))
+    dist_br = np.minimum(np.minimum(min_hex_dist(f - np.array([0.5, 0.0]), V_sub), min_hex_dist(f - np.array([0.0, 0.5]), V_sub)), min_hex_dist(f - np.array([0.5, -0.5]), V_sub))
+    return dist_co, dist_ho, dist_br
 
 def get_square_density(a, X_grid, Y_grid):
     return 2.0 + np.cos(2 * np.pi / a * X_grid) + np.cos(2 * np.pi / a * Y_grid)
@@ -122,10 +131,15 @@ def get_hex_G(a, theta_deg):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
-    # STRICT OOP ARCHITECTURE
-    fig = Figure(figsize=(21, 6.5), dpi=100)
-    canvas = FigureCanvasAgg(fig) 
+def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
+    pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
+
+    if fig is None:
+        fig = Figure(figsize=(21, 6.5), dpi=100)
+        FigureCanvasAgg(fig) 
+    else:
+        fig.clf()
+        
     fig.patch.set_facecolor('#1a1a1a')
     
     if is_video_frame:
@@ -154,6 +168,8 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     # ------------------------------------------
     # DATA ROUTING BY SYSTEM
     # ------------------------------------------
+    layer2_Cq = 0.01  # Default Quantum Capacitance for MoS2 in F/m^2 (~100 uF/cm^2)
+    
     if 'Hex-on-Square' in system_mode:
         if 'SrTiO₃' in system_mode:
             title_str, a_sub = r"MoS$_2$ on SrTiO$_3$(100)", a_sto
@@ -189,11 +205,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        f = vis_top.dot(invV_bise.T)
-        dist_co = min_hex_dist(f, V_bise)
-        dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_bise), min_hex_dist(f - np.array([2/3, 2/3]), V_bise))
-        dist_br = np.minimum(np.minimum(min_hex_dist(f - np.array([0.5, 0.0]), V_bise), min_hex_dist(f - np.array([0.0, 0.5]), V_bise)), min_hex_dist(f - np.array([0.5, -0.5]), V_bise))
-        
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_bise, invV_bise)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
@@ -209,11 +221,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        f = vis_top.dot(invV_g.T)
-        dist_co = min_hex_dist(f, V_g)
-        dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_g), min_hex_dist(f - np.array([2/3, 2/3]), V_g))
-        dist_br = np.minimum(np.minimum(min_hex_dist(f - np.array([0.5, 0.0]), V_g), min_hex_dist(f - np.array([0.0, 0.5]), V_g)), min_hex_dist(f - np.array([0.5, -0.5]), V_g))
-        
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_g, invV_g)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
@@ -223,17 +231,14 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     else: 
         title_str, decay_L = "Magic-Angle Twisted Bilayer Graphene", 0.25 * a_g
         label1, label2 = "Layer 1 (Graphene)", "Layer 2 (Rotated)"
+        layer2_Cq = 0.002 # Quantum Capacitance for Graphene near Dirac Point in F/m^2 (~20 uF/cm^2)
         
         mask_sub = (np.abs(pts_grap_base[:, 0]) < current_fov) & (np.abs(pts_grap_base[:, 1]) < current_fov)
         vis_base = pts_grap_base[mask_sub]
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
-        f = vis_top.dot(invV_g.T)
-        dist_co = min_hex_dist(f, V_g)
-        dist_ho = np.minimum(min_hex_dist(f - np.array([1/3, 1/3]), V_g), min_hex_dist(f - np.array([2/3, 2/3]), V_g))
-        dist_br = np.minimum(np.minimum(min_hex_dist(f - np.array([0.5, 0.0]), V_g), min_hex_dist(f - np.array([0.0, 0.5]), V_g)), min_hex_dist(f - np.array([0.5, -0.5]), V_g))
-        
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_g, invV_g)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
@@ -289,7 +294,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        # RESTORED MESOSCOPIC ALGORITHM
+        # FAST MESOSCOPIC ALGORITHM VIA FFT CONVOLUTION
         if boundary_mode != "None":
             try:
                 domain_pairs = [(score_co, '#ff6666', show_co_dom), 
@@ -306,15 +311,19 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
                     ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
                     iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
                     
-                    radius = int(max(2.0, (a_mos2 * 1.5) / dx))
+                    radius = max(2.0, (a_mos2 * 1.5) / dx)
+                    
+                    k_size = int(np.ceil(radius * 3))
+                    kx = np.arange(-k_size, k_size + 1)
+                    k_grid_x, k_grid_y = np.meshgrid(kx, kx)
+                    kernel = np.exp(-(k_grid_x**2 + k_grid_y**2) / (2 * (radius)**2))
                     
                     for score, color, is_shown in domain_pairs:
                         if not is_shown: continue
                         grid_z = np.zeros((N_den, N_den))
                         np.maximum.at(grid_z, (iy, ix), score) 
                         
-                        grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                        grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                        grid_z_meso = signal.fftconvolve(grid_z, kernel, mode='same')
                         
                         if np.max(grid_z_meso) > 1e-5:
                             grid_z_meso = grid_z_meso / np.max(grid_z_meso)
@@ -345,7 +354,9 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         
     else:
         Z_map = Z_0.copy()
-        lr = 0.05 
+        
+        # Adaptive learning rate for PDE Stability
+        lr = 0.05 / (1.0 + k_elastic * 10) 
         A_elec = 0.5 * (w2 - w1)**2 
         
         show_bar = not is_video_frame
@@ -389,7 +400,11 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         epsilon_0, e_charge = 8.854e-12, 1.602e-19
         delta_W = w2 - w1 if (w2 - w1) != 0 else 1e-6
         
-        delta_n = (epsilon_0 * delta_W) / (e_charge * Z_meters) / 1e4 
+        # QUANTUM CAPACITANCE IMPLENTATION (Series sum C_geom and C_q)
+        C_geom = epsilon_0 / Z_meters
+        C_total = (C_geom * layer2_Cq) / (C_geom + layer2_Cq)
+        delta_n = (C_total * delta_W) / e_charge / 1e4 # Convert to cm^-2
+        
         vmin = np.percentile(delta_n, den_contrast)
         vmax = np.percentile(delta_n, 100 - den_contrast)
         
@@ -474,7 +489,6 @@ with col1:
     system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
     
-    # RESTORED DOMAIN BOUNDARY DROPDOWN
     boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
 with col2:
@@ -537,9 +551,8 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
 # Render the single unified plot
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
 st.pyplot(fig)
-
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
 st.markdown("---")
@@ -553,8 +566,11 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     vid_progress = st.progress(0, text=f"Rendering frame 1 of {max_t_int + 1}...")
     
     frames = []
+    video_fig = Figure(figsize=(21, 6.5), dpi=100) # Initialize figure OUTSIDE the loop once
+    FigureCanvasAgg(video_fig)
+    
     for ang in range(max_t_int + 1):
-        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
+        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
