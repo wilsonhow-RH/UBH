@@ -71,7 +71,8 @@ def generate_base_grids():
     pts_grap_base = (nn_g.reshape(-1, 1) * V_g[:,0] + mm_g.reshape(-1, 1) * V_g[:,1])
     pts_grap_base = pts_grap_base[(np.abs(pts_grap_base[:, 0]) < max_grid*1.5) & (np.abs(pts_grap_base[:, 1]) < max_grid*1.5)]
 
-    N_fft = 1024
+    # SPEED OPTIMIZATION: Reduced FFT grid from 1024 to 512 for a massive calculation speed boost.
+    N_fft = 512  
     L_fft = 400.0  
     x_fft = np.linspace(-L_fft/2, L_fft/2, N_fft)
     y_fft = np.linspace(-L_fft/2, L_fft/2, N_fft)
@@ -126,19 +127,21 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 6.5), dpi=100)
     fig.patch.set_facecolor('#1a1a1a')
     
+    # FIXED: The twist angle is now anchored to the absolute top-left of the entire figure, decoupled from the axes.
+    if is_video_frame:
+        fig.text(0.02, 0.92, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=18, fontweight='bold', ha='left')
+    
     for ax in [ax1, ax2, ax3]:
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
-        # Only add the twist angle overlay if we are generating a video frame
-        if is_video_frame:
-            ax.text(0.0, 1.05, f"Twist Angle: {theta_deg:.1f}°", transform=ax.transAxes, color='#ffcc00', fontsize=12, fontweight='bold', ha='left')
     
     th = np.radians(theta_deg)
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     base_size = max(5, 50 / (zoom_factor ** 0.5))
 
-    N_den = 400
+    # SPEED OPTIMIZATION: Reduced spatial mapping grid from 400 to 300
+    N_den = 300
     x_den = np.linspace(-current_fov, current_fov, N_den)
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
@@ -192,7 +195,6 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_bise, 0.0), get_hex_G(a_mos2, theta_deg)
 
-    # FIXED: Restored dedicated Graphene vs MATBG logic
     elif 'Graphene' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on Graphene", 0.25 * a_g 
         label1, label2 = r"Layer 1 (Graphene)", r"Layer 2 (MoS$_2$)"
@@ -441,7 +443,9 @@ with col2:
     den_cmap = st.selectbox("Panel 2 Color:", ['magma', 'viridis', 'plasma', 'cividis', 'gray', 'bone', 'coolwarm'])
 
 with col3:
-    theta_deg = st.slider("Twist Angle (deg):", 0.0, 45.0, 0.0, 0.1)
+    # FIXED: The max rotation angle is now dynamically evaluated based on the crystal symmetries
+    max_theta = 60.0 if 'Hex-on-Hex' in system_mode else 90.0
+    theta_deg = st.slider("Twist Angle (deg):", 0.0, max_theta, 0.0, 0.1)
     zoom_factor = st.slider("FOV Zoom (x):", 1.0, 5.0, 1.0, 0.5)
     q_max = st.slider("q-space Zoom (Å⁻¹):", 1.0, 8.0, 4.0, 0.5)
     den_contrast = st.slider("Contrast Clip (%):", 0.0, 20.0, 0.0, 1.0)
@@ -494,7 +498,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# FIXED: Render the Plot ONLY ONCE after all UI elements are defined
+# Render the Plot
 fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
 st.pyplot(fig)
 
@@ -503,12 +507,17 @@ st.pyplot(fig)
 st.markdown("---")
 st.markdown("### 🎥 Cinematic Tools")
 
-if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
+max_t_int = int(max_theta)
+if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     st.session_state.is_rendering_video = True
-    vid_progress = st.progress(0, text="Rendering frame 1 of 46...")
+    
+    # FIXED: Lock in the safe string name of the system exactly when generation starts
+    st.session_state.video_sys_name = system_mode.replace("/", "_").split(" ")[0]
+    
+    vid_progress = st.progress(0, text=f"Rendering frame 1 of {max_t_int + 1}...")
     
     frames = []
-    for ang in range(46):
+    for ang in range(max_t_int + 1):
         fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
@@ -517,7 +526,7 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
         frames.append(img)
         
         plt.close(fig_frame) 
-        vid_progress.progress(int((ang + 1) / 46 * 100), text=f"Rendering frame {ang+1} of 46...")
+        vid_progress.progress(int((ang + 1) / (max_t_int + 1) * 100), text=f"Rendering frame {ang+1} of {max_t_int+1}...")
     
     vid_progress.progress(100, text="Encoding MP4 Video...")
     imageio.mimsave("moire_twist_scan.mp4", frames, fps=4, macro_block_size=None)
@@ -526,16 +535,18 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     
     st.success("Video Generated Successfully!")
     
-    # FIXED: Save video bytes to session state so it survives UI reloads
     with open("moire_twist_scan.mp4", "rb") as file:
         st.session_state.video_bytes = file.read()
 
-# Render video persistently if it exists in memory
+# Render persistent video
 if "video_bytes" in st.session_state:
     st.video(st.session_state.video_bytes, autoplay=True, loop=True)
+    
+    # FIXED: The download name matches the exact system the video was generated under
+    dl_name = st.session_state.get('video_sys_name', 'System')
     st.download_button(
         label="💾 Save Video to Computer",
         data=st.session_state.video_bytes,
-        file_name=f"twist_scan_{system_mode[:4]}.mp4",
+        file_name=f"twist_scan_{dl_name}.mp4",
         mime="video/mp4"
     )
