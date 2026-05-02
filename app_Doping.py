@@ -141,8 +141,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     fig.patch.set_facecolor('#1a1a1a')
     
     if is_video_frame:
-        # Repositioned and shrunk video text to avoid interfering with panel title
-        fig.text(0.01, 0.98, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
+        fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
     ax1 = fig.add_subplot(131)
     ax2 = fig.add_subplot(132)
@@ -171,10 +170,10 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     
     if 'Hex-on-Square' in system_mode:
         if 'SrTiO₃' in system_mode:
-            title_str, a_sub = r"MoS$_2$ on SrTiO$_3$(100)", a_sto
+            title_str, a_sub = r"MoS$_2$ on SrTiO$_3$", a_sto
             label1, label2 = r"Layer 1 (SrTiO$_3$)", r"Layer 2 (MoS$_2$)"
         else:
-            title_str, a_sub = r"1ML MoS$_2$ on 1ML FeSe(100)", a_fese
+            title_str, a_sub = r"1ML MoS$_2$ on 1ML FeSe", a_fese
             label1, label2 = r"Layer 1 (FeSe)", r"Layer 2 (MoS$_2$)"
             
         decay_L = 0.25 * a_sub
@@ -279,7 +278,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     ax1.set_xlim(-current_fov, current_fov)
     ax1.set_ylim(-current_fov, current_fov)
-    ax1.set_title(f"Topology (Registry Map)\n{title_str}", color='white', fontsize=13)
+    ax1.set_title(f"Topology (Registry Map)\n{title_str} | FOV: {zoom_factor}x", color='white', fontsize=13)
     ax1.set_xlabel(r"Distance ($\AA$)", color='white')
     ax1.set_ylabel(r"Distance ($\AA$)", color='white')
     
@@ -316,7 +315,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # DYNAMIC HALF-MAX MESOSCOPIC ENVELOPES
+        # ROBUST THRESHOLD MESOSCOPIC ENVELOPES
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -338,7 +337,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 
-                # Minimum integer radius to bridge adjacent atomic points tightly
                 radius = int(np.ceil((a_mos2 * 1.1) / dx))
                 
                 x_pad = np.linspace(-pad_fov, pad_fov, N_pad)
@@ -352,21 +350,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
                     grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/2.0)
+                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
                     
-                    z_min = np.min(grid_z_meso)
                     z_max = np.max(grid_z_meso)
                     
-                    # Dynamic Half-Max contouring isolates boundaries regardless of baseline blur shifts
-                    if (z_max - z_min) > 1e-5:
-                        dynamic_level = z_min + (z_max - z_min) * 0.5
-                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[dynamic_level], colors=color, linewidths=1.5, linestyles='solid')
+                    # Absolute relative threshold prevents drawing boundaries around local noise floors
+                    if z_max > 0.3:
+                        level = z_max * 0.45
+                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
 
     # Ensure identical panel size by enforcing a fully invisible colorbar layout on Panel 1
     transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
     cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    cbar1.ax.set_facecolor('none')  # Completely removes the white axes background
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
     for spine in cbar1.ax.spines.values():
@@ -479,7 +477,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
     ax3.set_xlim(-q_max, q_max)
     ax3.set_ylim(-q_max, q_max)
-    ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$", color='white', fontsize=13)
+    ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
     cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
@@ -497,7 +495,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     ax3.legend(loc='upper right', fontsize=9, framealpha=0.8)
-    fig.tight_layout()
+    
+    # HARD-LOCKED LAYOUT to prevent text elements from dynamically resizing panels during video generation
+    fig.subplots_adjust(left=0.03, right=0.97, bottom=0.1, top=0.85, wspace=0.15)
         
     return fig
 
@@ -507,7 +507,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
+    system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
     boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
@@ -535,7 +535,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     
     intrinsic_z = {
         'MoS₂/SrTiO₃ (Hex-on-Square)': (3.1, 3.6),
-        'MoS₂/FeSe(100) (Hex-on-Square)': (3.2, 3.6),
+        'MoS₂/FeSe (Hex-on-Square)': (3.2, 3.6),
         'MoS₂/Bi₂Se₃ (Hex-on-Hex)': (3.2, 3.6),
         'MoS₂/Graphene (Hex-on-Hex)': (3.3, 3.6),
         'MATBG (Hex-on-Hex)': (3.35, 3.6)
