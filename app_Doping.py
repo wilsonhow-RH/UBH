@@ -1,6 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm
 import matplotlib.lines as mlines
 import matplotlib.tri as mtri
@@ -36,10 +37,19 @@ if not check_password():
 
 # --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX ---
 def synced_input(label, min_val, max_val, default_val, step, key):
+    min_val, max_val, step = float(min_val), float(max_val), float(step)
+
+    # Safe Initialization
     if f"{key}_slider" not in st.session_state:
         st.session_state[f"{key}_slider"] = float(default_val)
     if f"{key}_num" not in st.session_state:
         st.session_state[f"{key}_num"] = float(default_val)
+
+    # Bounds Protection (Prevents API Exception when switching systems)
+    if st.session_state[f"{key}_slider"] > max_val:
+        st.session_state[f"{key}_slider"] = max_val
+    if st.session_state[f"{key}_num"] > max_val:
+        st.session_state[f"{key}_num"] = max_val
 
     def sync_from_slider():
         st.session_state[f"{key}_num"] = st.session_state[f"{key}_slider"]
@@ -49,9 +59,9 @@ def synced_input(label, min_val, max_val, default_val, step, key):
     st.markdown(f"<p style='font-size:14px; margin-bottom:-10px; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
     c1, c2 = st.columns([4, 1])
     with c1:
-        st.slider(label, min_value=float(min_val), max_value=float(max_val), step=float(step), key=f"{key}_slider", on_change=sync_from_slider, label_visibility="collapsed")
+        st.slider("slider_"+key, min_value=min_val, max_value=max_val, step=step, key=f"{key}_slider", on_change=sync_from_slider, label_visibility="collapsed")
     with c2:
-        st.number_input(label, min_value=float(min_val), max_value=float(max_val), step=float(step), key=f"{key}_num", on_change=sync_from_num, label_visibility="collapsed")
+        st.number_input("num_"+key, min_value=min_val, max_value=max_val, step=step, key=f"{key}_num", on_change=sync_from_num, label_visibility="collapsed")
         
     return st.session_state[f"{key}_slider"]
 
@@ -141,6 +151,9 @@ def get_hex_G(a, theta_deg):
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
 def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=True, is_video_frame=False):
+    # Wipes any hung memory states from the cloud server
+    plt.close('all') 
+    
     current_fov = base_grid * zoom_factor
     
     if separate_panels:
@@ -343,14 +356,19 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
             except Exception:
                 pass 
 
-    # FIXED: Matplotlib layout alignment fix for invisible colorbars (uses set_facecolor)
-    sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
+    # FIXED: The 100% robust way to make a dummy colorbar transparent without backend crashing
+    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
+    sm = plt.cm.ScalarMappable(cmap=transparent_cmap, norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
-    cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    
+    if separate_panels:
+        cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    else:
+        cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+        
     cbar1.outline.set_visible(False)
-    cbar1.ax.tick_params(colors='none') 
-    cbar1.set_label('                               ', color='none') 
-    cbar1.ax.set_facecolor('none')
+    cbar1.set_ticks([]) 
+    cbar1.set_label('Invisible Text Placeholder', color='#1a1a1a') # Blends seamlessly with background
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -448,9 +466,8 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=label2)
     
     g1_A = G1_pts[np.argmax(G1_pts[:, 1])]
-    g1_B = G1_pts[np.argmax(G1_pts[:, 1])] if len(G1_pts) > 0 else g1_A
+    g1_B = G1_pts[np.argmax(G1_pts[:, 0])] if len(G1_pts) > 0 else g1_A
     try:
-        g1_B = G1_pts[np.argmax(G1_pts[:, 0])]
         g2_A = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_A, axis=1))]
         g2_B = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_B, axis=1))]
 
@@ -461,6 +478,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
                 ax3.annotate("", xy=v2, xytext=v1, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
     except:
         pass
+        
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vector $\mathbf{q}_M$')
 
     ax3.set_xlim(-q_max, q_max)
@@ -563,13 +581,12 @@ fig1, fig2, fig3 = create_unified_plot(system_mode, theta_deg, zoom_factor, q_ma
 
 pcol1, pcol2, pcol3 = st.columns(3)
 with pcol1:
-    st.pyplot(fig1)
+    st.pyplot(fig1, clear_figure=True)
 with pcol2:
-    st.pyplot(fig2)
+    st.pyplot(fig2, clear_figure=True)
 with pcol3:
-    st.pyplot(fig3)
+    st.pyplot(fig3, clear_figure=True)
 
-plt.close(fig1); plt.close(fig2); plt.close(fig3)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
 st.markdown("---")
