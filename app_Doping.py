@@ -8,35 +8,33 @@ import scipy.ndimage as ndimage
 import time
 import imageio
 
+st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
+
+st.title("UHV-bonded Heterostructure Physics Dashboard")
+st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures (by Gemini & Ruihua He, 5/1/26).")
+
 # --- PASSWORD PROTECTION ---
 def check_password():
     """Returns `True` if the user had the correct password."""
     def password_entered():
-        if st.session_state["password"] == "physics2026": # Change this to your desired password
+        if st.session_state["password"] == "physics2026": # Change your password here
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Don't store password
+            del st.session_state["password"]  
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.text_input("Enter Password to access the UHV Dashboard:", type="password", on_change=password_entered, key="password")
+        st.text_input("🔒 Enter Password to access the UHV Dashboard:", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        st.text_input("Enter Password to access the UHV Dashboard:", type="password", on_change=password_entered, key="password")
+        st.text_input("🔒 Enter Password to access the UHV Dashboard:", type="password", on_change=password_entered, key="password")
         st.error("Incorrect Password")
         return False
     return True
 
 if not check_password():
-    st.stop() # Stops the rest of the code from running until password is correct
+    st.stop()
 # ---------------------------
-
-# ... (The rest of your Moire dashboard code goes here) ...
-
-st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
-
-st.title("UHV-bonded Heterostructure Physics Dashboard")
-st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures (by Gemini & Ruihua He, 5/1/26).")
 
 # ==========================================
 # 1. PARAMETERS & PRE-COMPUTATION
@@ -132,6 +130,8 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
+        # Annotate twist angle in the upper left corner outside the image boundary
+        ax.text(0.0, 1.05, f"Twist Angle: {theta_deg:.1f}°", transform=ax.transAxes, color='#ffcc00', fontsize=12, fontweight='bold', ha='left')
     
     th = np.radians(theta_deg)
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
@@ -212,7 +212,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
 
     # ------------------------------------------
-    # NEW: ANALYTICAL FWHM AND COVERAGE
+    # ANALYTICAL FWHM AND COVERAGE
     # ------------------------------------------
     fwhm_factor = 2 * np.sqrt(np.log(2))
     w_co = decay_L * fwhm_factor
@@ -246,7 +246,6 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05)
         show_all, show_clean = (view_mode == 'Show All Registries'), (view_mode == 'Coincident + Hollow')
         
-        # Plot Scatter Domains
         if show_all or show_clean or view_mode == 'Coincident Only':
             c_co = np.zeros((len(vis_top), 4)); c_co[:, 0], c_co[:, 1], c_co[:, 2], c_co[:, 3] = 1.0, 0.2, 0.3, score_co
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_co, c=c_co, edgecolors='none')
@@ -257,7 +256,6 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        # NEW: Draw 50% Fall-off Contour Boundaries via Triangulation
         if show_boundaries:
             try:
                 triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
@@ -268,7 +266,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
                 if show_all or view_mode == 'Bridge Only':
                     ax1.tricontour(triang, score_br, levels=[0.5], colors='#66ff66', linewidths=1.5, linestyles='solid')
             except Exception:
-                pass # Fail silently if zoom is too extreme for triangulation
+                pass 
 
     sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
@@ -426,9 +424,6 @@ with col3:
     q_max = st.slider("q-space Zoom (Å⁻¹):", 1.0, 8.0, 4.0, 0.5)
     den_contrast = st.slider("Contrast Clip (%):", 0.0, 20.0, 0.0, 1.0)
 
-# Render the Plot
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, "Rigid Lattices (No Relaxation)", 4.2, 4.5, 3.1, 3.6, 0.0, 0.0, 80.0, 0.5) 
-
 # --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
     
@@ -477,7 +472,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# Re-render plot with proper params if they were modified in the expander
+# Render the Plot AFTER all UI elements are defined
 fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
 st.pyplot(fig)
 
@@ -494,17 +489,17 @@ if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
     for ang in range(46):
         fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
         
-        # FIXED: Streamlit-Cloud safe RGB buffer extraction
+        # Streamlit-Cloud safe RGB buffer extraction
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
-        img = img_rgba[:, :, :3] # Slice out the Alpha channel to get pure RGB
+        img = img_rgba[:, :, :3] 
         frames.append(img)
         
         plt.close(fig_frame) 
         vid_progress.progress(int((ang + 1) / 46 * 100), text=f"Rendering frame {ang+1} of 46...")
     
     vid_progress.progress(100, text="Encoding MP4 Video...")
-    imageio.mimsave("moire_twist_scan.mp4", frames, fps=8, macro_block_size=None)
+    imageio.mimsave("moire_twist_scan.mp4", frames, fps=4, macro_block_size=None)
     vid_progress.empty()
     st.session_state.is_rendering_video = False
     
