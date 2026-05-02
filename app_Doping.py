@@ -1,5 +1,6 @@
 import streamlit as st
 import numpy as np
+import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm, Normalize
 import matplotlib.cm as cm
@@ -121,8 +122,8 @@ def get_hex_G(a, theta_deg):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
-    # STRICT OOP ARCHITECTURE: Eliminates global Matplotlib memory leaks
+def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
+    # STRICT OOP ARCHITECTURE
     fig = Figure(figsize=(21, 6.5), dpi=100)
     canvas = FigureCanvasAgg(fig) 
     fig.patch.set_facecolor('#1a1a1a')
@@ -288,19 +289,46 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        if show_boundaries:
+        # RESTORED MESOSCOPIC ALGORITHM
+        if boundary_mode != "None":
             try:
-                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
-                if show_co_dom: ax1.tricontour(triang, score_co, levels=[0.5], colors='#ff6666', linewidths=1.5, linestyles='solid')
-                if show_ho_dom: ax1.tricontour(triang, score_ho, levels=[0.5], colors='#66b3ff', linewidths=1.5, linestyles='solid')
-                if show_br_dom: ax1.tricontour(triang, score_br, levels=[0.5], colors='#66ff66', linewidths=1.5, linestyles='solid')
+                domain_pairs = [(score_co, '#ff6666', show_co_dom), 
+                                (score_ho, '#66b3ff', show_ho_dom), 
+                                (score_br, '#66ff66', show_br_dom)]
+                
+                if boundary_mode == "Microscopic (Atomic)":
+                    triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
+                    for score, color, is_shown in domain_pairs:
+                        if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                        
+                elif boundary_mode == "Mesoscopic (Envelope)":
+                    dx = (current_fov * 2) / N_den
+                    ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
+                    iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
+                    
+                    radius = int(max(2.0, (a_mos2 * 1.5) / dx))
+                    
+                    for score, color, is_shown in domain_pairs:
+                        if not is_shown: continue
+                        grid_z = np.zeros((N_den, N_den))
+                        np.maximum.at(grid_z, (iy, ix), score) 
+                        
+                        grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
+                        grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                        
+                        if np.max(grid_z_meso) > 1e-5:
+                            grid_z_meso = grid_z_meso / np.max(grid_z_meso)
+                            ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
             except Exception:
                 pass 
 
-    sm = cm.ScalarMappable(cmap='gray', norm=Normalize(vmin=0, vmax=1))
+    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
+    sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
     cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-    cbar1.ax.set_visible(False)
+    cbar1.outline.set_visible(False)
+    cbar1.set_ticks([])
+    cbar1.set_label('Invisible Text Placeholder', color='#1a1a1a')
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -320,7 +348,10 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
         lr = 0.05 
         A_elec = 0.5 * (w2 - w1)**2 
         
-        # NETWORK OPTIMIZATION: Removed all network-blocking progress bars from the fast live-preview math loop
+        show_bar = not is_video_frame
+        if show_bar:
+            my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
+            
         iterations = 120 if is_video_frame else 50
         for i in range(iterations):
             laplacian = ndimage.laplace(Z_map)
@@ -330,6 +361,12 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, s
             
             Z_map = Z_map + lr * (F_elastic + F_vdw + F_elec)
             Z_map = np.clip(Z_map, 1.5, 5.0) 
+            
+            if show_bar and i % 10 == 0:
+                my_bar.progress(int((i / iterations) * 100), text=f"Minimizing Free Energy: Iteration {i}/{iterations}")
+                
+        if show_bar:
+            my_bar.empty()
 
     final_zmin, final_zmax = np.min(Z_map), np.max(Z_map)
 
@@ -436,7 +473,9 @@ col1, col2, col3 = st.columns(3)
 with col1:
     system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
-    show_boundaries = st.checkbox("Show Domain Boundaries (50% Fall-off)", value=False)
+    
+    # RESTORED DOMAIN BOUNDARY DROPDOWN
+    boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
 with col2:
     mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
@@ -498,7 +537,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
 # Render the single unified plot
-fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
 st.pyplot(fig)
 
 
@@ -515,7 +554,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     
     frames = []
     for ang in range(max_t_int + 1):
-        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
+        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
