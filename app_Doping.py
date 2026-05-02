@@ -36,20 +36,22 @@ if not check_password():
 
 # --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX ---
 def synced_input(label, min_val, max_val, default_val, step, key):
+    # Initialize the shared value in session state
     if f"{key}_val" not in st.session_state:
         st.session_state[f"{key}_val"] = float(default_val)
 
-    def on_slider():
-        st.session_state[f"{key}_val"] = float(st.session_state[f"{key}_slider"])
-    def on_num():
-        st.session_state[f"{key}_val"] = float(st.session_state[f"{key}_num"])
+    # Callbacks to keep both widgets perfectly in sync
+    def update_from_slider():
+        st.session_state[f"{key}_val"] = st.session_state[f"{key}_slider"]
+    def update_from_num():
+        st.session_state[f"{key}_val"] = st.session_state[f"{key}_num"]
 
-    st.markdown(f"**{label}**")
-    c1, c2 = st.columns([3, 1])
+    st.markdown(f"<p style='font-size:14px; margin-bottom:-10px; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
+    c1, c2 = st.columns([4, 1])
     with c1:
-        st.slider(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_slider", on_change=on_slider, label_visibility="collapsed")
+        st.slider(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_slider", on_change=update_from_slider, label_visibility="collapsed")
     with c2:
-        st.number_input(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_num", on_change=on_num, label_visibility="collapsed")
+        st.number_input(label, min_value=float(min_val), max_value=float(max_val), value=st.session_state[f"{key}_val"], step=float(step), key=f"{key}_num", on_change=update_from_num, label_visibility="collapsed")
         
     return st.session_state[f"{key}_val"]
 
@@ -141,7 +143,6 @@ def get_hex_G(a, theta_deg):
 def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=True, is_video_frame=False):
     current_fov = base_grid * zoom_factor
     
-    # FIXED: Architecture split. Generates 3 independent figures for UI, 1 combined figure for Video.
     if separate_panels:
         fig1, ax1 = plt.subplots(figsize=(7, 6.5), dpi=100)
         fig2, ax2 = plt.subplots(figsize=(7, 6.5), dpi=100)
@@ -310,7 +311,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        # FIXED: Robust Domain Boundary Architecture
+        # Domain Boundary Architecture
         if boundary_mode != "None":
             try:
                 triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
@@ -325,26 +326,29 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
                         ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
                         
                     elif boundary_mode == "Mesoscopic (Envelope)":
-                        # Physics Fix: Interpolate atomic score to dense grid, then blur to merge fragment islands
+                        # 1. Map discrete atomic scores to dense spatial grid
                         interp = mtri.LinearTriInterpolator(triang, score)
                         grid_z = interp(X_den, Y_den)
                         grid_z = np.ma.filled(grid_z, fill_value=0.0) 
                         
+                        # 2. Maximum Filter (Dilation): Bridges the atomic gaps without losing peak intensity
                         dx = (current_fov * 2) / N_den
-                        sigma_pixel = (a_mos2 * 1.5) / dx 
-                        grid_z_meso = ndimage.gaussian_filter(grid_z, sigma=sigma_pixel)
+                        radius = int(max(1.0, (a_mos2 * 1.0) / dx))
+                        grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
                         
-                        # Normalize smoothed field to preserve logical boundaries
-                        if np.max(grid_z_meso) > 1e-5:
-                            grid_z_meso = grid_z_meso / np.max(grid_z_meso)
-                            ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                        # 3. Mild Gaussian smoothing to round out the dilated envelope edges
+                        grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                        
+                        ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
             except Exception:
                 pass 
 
+    # FIXED: Phantom colorbar label to ensure Matplotlib's tight_layout matches all 3 panels exactly
     sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
     cbar1.ax.set_visible(False)
+    cbar1.set_label('Invisible Text Placeholder to Match', color='#1a1a1a') # Blends into dark background
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -396,7 +400,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         
         im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Relative Interfacial Density', color='white')
         
@@ -411,7 +415,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -422,7 +426,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
 
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -459,7 +463,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
-    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
+    cbar3 = fig3.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
     cbar3.ax.tick_params(colors='white')
     cbar3.set_label('Scattering Intensity (a.u.)', color='white')
     
@@ -549,7 +553,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# FIXED: Render 3 Independent Plots so full-screen works per-panel
+# Render 3 Independent Plots so full-screen works per-panel
 fig1, fig2, fig3 = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=True, is_video_frame=False)
 
 pcol1, pcol2, pcol3 = st.columns(3)
@@ -560,7 +564,6 @@ with pcol2:
 with pcol3:
     st.pyplot(fig3)
 
-# Clean up memory explicitly
 plt.close(fig1); plt.close(fig2); plt.close(fig3)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -576,7 +579,6 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     
     frames = []
     for ang in range(max_t_int + 1):
-        # Generate the combined 1x3 frame for video recording
         fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=False, is_video_frame=True)
         
         fig_frame.canvas.draw()
