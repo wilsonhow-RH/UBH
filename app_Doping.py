@@ -315,7 +315,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # ROBUST THRESHOLD MESOSCOPIC ENVELOPES
+        # FULLY INDEPENDENT MESOSCOPIC ENVELOPES (Fixes missing red/blue domains)
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -346,25 +346,29 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 for score, color, is_shown in domain_pairs:
                     if not is_shown: continue
                     sc_pad = score[valid_mask]
+                    
+                    # Ensure there are actually valid atoms before processing to save time
+                    if len(sc_pad) == 0: continue
+                    
                     grid_z = np.zeros((N_pad, N_pad))
                     np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
                     grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
                     grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
                     
+                    z_min = np.min(grid_z_meso)
                     z_max = np.max(grid_z_meso)
                     
-                    # Absolute relative threshold prevents drawing boundaries around local noise floors
-                    if z_max > 0.3:
-                        level = z_max * 0.45
+                    # Calculate contour strictly relatively for each independent domain
+                    if (z_max - z_min) > 1e-5:
+                        level = z_min + (z_max - z_min) * 0.5
                         ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
 
-    # Ensure identical panel size by enforcing a fully invisible colorbar layout on Panel 1
     transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
     cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-    cbar1.ax.set_facecolor('none')  # Completely removes the white axes background
+    cbar1.ax.set_facecolor('none')  
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
     for spine in cbar1.ax.spines.values():
@@ -496,7 +500,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
     ax3.legend(loc='upper right', fontsize=9, framealpha=0.8)
     
-    # HARD-LOCKED LAYOUT to prevent text elements from dynamically resizing panels during video generation
     fig.subplots_adjust(left=0.03, right=0.97, bottom=0.1, top=0.85, wspace=0.15)
         
     return fig
