@@ -1,12 +1,10 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
 from matplotlib.colors import LogNorm
 import matplotlib.lines as mlines
 import matplotlib.tri as mtri
 import scipy.ndimage as ndimage
-import time
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -34,36 +32,6 @@ def check_password():
 
 if not check_password():
     st.stop()
-
-# --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX ---
-def synced_input(label, min_val, max_val, default_val, step, key):
-    min_val, max_val, step = float(min_val), float(max_val), float(step)
-
-    # Safe Initialization
-    if f"{key}_slider" not in st.session_state:
-        st.session_state[f"{key}_slider"] = float(default_val)
-    if f"{key}_num" not in st.session_state:
-        st.session_state[f"{key}_num"] = float(default_val)
-
-    # Bounds Protection (Prevents API Exception when switching systems)
-    if st.session_state[f"{key}_slider"] > max_val:
-        st.session_state[f"{key}_slider"] = max_val
-    if st.session_state[f"{key}_num"] > max_val:
-        st.session_state[f"{key}_num"] = max_val
-
-    def sync_from_slider():
-        st.session_state[f"{key}_num"] = st.session_state[f"{key}_slider"]
-    def sync_from_num():
-        st.session_state[f"{key}_slider"] = st.session_state[f"{key}_num"]
-
-    st.markdown(f"<p style='font-size:14px; margin-bottom:-10px; font-weight:bold;'>{label}</p>", unsafe_allow_html=True)
-    c1, c2 = st.columns([4, 1])
-    with c1:
-        st.slider("slider_"+key, min_value=min_val, max_value=max_val, step=step, key=f"{key}_slider", on_change=sync_from_slider, label_visibility="collapsed")
-    with c2:
-        st.number_input("num_"+key, min_value=min_val, max_value=max_val, step=step, key=f"{key}_num", on_change=sync_from_num, label_visibility="collapsed")
-        
-    return st.session_state[f"{key}_slider"]
 
 # ==========================================
 # 1. PARAMETERS & PRE-COMPUTATION
@@ -150,29 +118,18 @@ def get_hex_G(a, theta_deg):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=True, is_video_frame=False):
-    # Wipes any hung memory states from the cloud server
-    plt.close('all') 
+def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
+    plt.close('all') # Clear memory to ensure fast cloud rendering
     
     current_fov = base_grid * zoom_factor
     
-    if separate_panels:
-        fig1, ax1 = plt.subplots(figsize=(7, 6.5), dpi=100)
-        fig2, ax2 = plt.subplots(figsize=(7, 6.5), dpi=100)
-        fig3, ax3 = plt.subplots(figsize=(7, 6.5), dpi=100)
-        figs = (fig1, fig2, fig3)
-        axes = (ax1, ax2, ax3)
-        for fig in figs:
-            fig.patch.set_facecolor('#1a1a1a')
-    else:
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 6.5), dpi=100)
-        fig.patch.set_facecolor('#1a1a1a')
-        figs = fig
-        axes = (ax1, ax2, ax3)
-        if is_video_frame:
-            fig.text(0.02, 0.92, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=18, fontweight='bold', ha='left')
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(21, 6.5), dpi=100)
+    fig.patch.set_facecolor('#1a1a1a')
     
-    for ax in axes:
+    if is_video_frame:
+        fig.text(0.02, 0.92, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=18, fontweight='bold', ha='left')
+    
+    for ax in [ax1, ax2, ax3]:
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
@@ -294,7 +251,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
 
     # ------------------------------------------
-    # PANEL 1: REGISTRY DOMAINS & BOUNDARIES
+    # PANEL 1: REGISTRY DOMAINS
     # ------------------------------------------
     ax1.set_xlim(-current_fov, current_fov)
     ax1.set_ylim(-current_fov, current_fov)
@@ -302,73 +259,41 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     ax1.set_xlabel(r"Distance ($\AA$)", color='white')
     ax1.set_ylabel(r"Distance ($\AA$)", color='white')
     
-    show_all = (view_mode == 'Show All Registries')
-    show_co_dom = show_all or view_mode in ['Coincident + Hollow', 'Coincident Only']
-    show_ho_dom = show_all or view_mode in ['Coincident + Hollow', 'Hollow Only']
-    show_br_dom = show_all or view_mode == 'Bridge Only'
-    
     if view_mode == 'Raw Lattices':
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='dodgerblue', alpha=0.5)
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=2, color='crimson', alpha=0.5)
     else:
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='gray', alpha=0.3)
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05)
+        show_all, show_clean = (view_mode == 'Show All Registries'), (view_mode == 'Coincident + Hollow')
         
-        if show_co_dom:
+        if show_all or show_clean or view_mode == 'Coincident Only':
             c_co = np.zeros((len(vis_top), 4)); c_co[:, 0], c_co[:, 1], c_co[:, 2], c_co[:, 3] = 1.0, 0.2, 0.3, score_co
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_co, c=c_co, edgecolors='none')
-        if show_ho_dom:
+        if show_all or show_clean or view_mode == 'Hollow Only':
             c_ho = np.zeros((len(vis_top), 4)); c_ho[:, 0], c_ho[:, 1], c_ho[:, 2], c_ho[:, 3] = 0.1, 0.6, 1.0, score_ho
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_ho, c=c_ho, edgecolors='none')
-        if show_br_dom:
+        if show_all or view_mode == 'Bridge Only':
             c_br = np.zeros((len(vis_top), 4)); c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br
             ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=base_size * score_br, c=c_br, edgecolors='none')
 
-        if boundary_mode != "None":
+        # Restored simple micro-boundaries checkbox functionality
+        if show_boundaries:
             try:
-                domain_pairs = [(score_co, '#ff6666', show_co_dom), 
-                                (score_ho, '#66b3ff', show_ho_dom), 
-                                (score_br, '#66ff66', show_br_dom)]
-                
-                if boundary_mode == "Microscopic (Atomic)":
-                    triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
-                    for score, color, is_shown in domain_pairs:
-                        if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
-                        
-                elif boundary_mode == "Mesoscopic (Envelope)":
-                    dx = (current_fov * 2) / N_den
-                    ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
-                    iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
-                    
-                    radius = int(max(2.0, (a_mos2 * 1.5) / dx))
-                    
-                    for score, color, is_shown in domain_pairs:
-                        if not is_shown: continue
-                        grid_z = np.zeros((N_den, N_den))
-                        np.maximum.at(grid_z, (iy, ix), score) 
-                        
-                        grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                        grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
-                        
-                        if np.max(grid_z_meso) > 1e-5:
-                            grid_z_meso = grid_z_meso / np.max(grid_z_meso)
-                            ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
+                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
+                if show_all or show_clean or view_mode == 'Coincident Only':
+                    ax1.tricontour(triang, score_co, levels=[0.5], colors='#ff6666', linewidths=1.5, linestyles='solid')
+                if show_all or show_clean or view_mode == 'Hollow Only':
+                    ax1.tricontour(triang, score_ho, levels=[0.5], colors='#66b3ff', linewidths=1.5, linestyles='solid')
+                if show_all or view_mode == 'Bridge Only':
+                    ax1.tricontour(triang, score_br, levels=[0.5], colors='#66ff66', linewidths=1.5, linestyles='solid')
             except Exception:
                 pass 
 
-    # FIXED: The 100% robust way to make a dummy colorbar transparent without backend crashing
-    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
-    sm = plt.cm.ScalarMappable(cmap=transparent_cmap, norm=plt.Normalize(vmin=0, vmax=1))
+    sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
-    
-    if separate_panels:
-        cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-    else:
-        cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
-        
-    cbar1.outline.set_visible(False)
-    cbar1.set_ticks([]) 
-    cbar1.set_label('Invisible Text Placeholder', color='#1a1a1a') # Blends seamlessly with background
+    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    cbar1.ax.set_visible(False)
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -420,7 +345,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         
         im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Relative Interfacial Density', color='white')
         
@@ -435,7 +360,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -446,7 +371,7 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
 
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig2.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -486,26 +411,24 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
-    cbar3 = fig3.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
+    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
     cbar3.ax.tick_params(colors='white')
     cbar3.set_label('Scattering Intensity (a.u.)', color='white')
     
     if view_mode != 'Raw Lattices':
         legend_elements = []
-        if show_co_dom:
+        if show_all or show_clean or view_mode == 'Coincident Only':
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label=f'Coincident (W: {w_co:.1f}Å, Cov: {cov_co:.1f}%)'))
-        if show_ho_dom:
+        if show_all or show_clean or view_mode == 'Hollow Only':
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label=f'Hollow (W: {w_ho:.1f}Å, Cov: {cov_ho:.1f}%)'))
-        if show_br_dom:
+        if show_all or view_mode == 'Bridge Only':
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=f'Bridge (W: {w_br:.1f}Å, Cov: {cov_br:.1f}%)'))
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     ax3.legend(loc='upper right', fontsize=9, framealpha=0.8)
-    
-    for ax in axes:
-        ax.figure.tight_layout()
+    fig.tight_layout()
         
-    return figs
+    return fig
 
 # ==========================================
 # 4. STREAMLIT UI CONTROLS
@@ -515,7 +438,7 @@ col1, col2, col3 = st.columns(3)
 with col1:
     system_mode = st.selectbox("System:", ['MoS₂/SrTiO₃ (Hex-on-Square)', 'MoS₂/FeSe(100) (Hex-on-Square)', 'MoS₂/Bi₂Se₃ (Hex-on-Hex)', 'MoS₂/Graphene (Hex-on-Hex)', 'MATBG (Hex-on-Hex)'])
     view_mode = st.selectbox("Topology View:", ['Show All Registries', 'Coincident + Hollow', 'Coincident Only', 'Hollow Only', 'Bridge Only', 'Raw Lattices'])
-    boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
+    show_boundaries = st.checkbox("Show Domain Boundaries (50% Fall-off)", value=False)
 
 with col2:
     mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
@@ -523,10 +446,10 @@ with col2:
 
 with col3:
     max_theta = 60.0 if 'Hex-on-Hex' in system_mode else 90.0
-    theta_deg = synced_input("Twist Angle (deg)", 0.0, max_theta, 0.0, 0.1, "theta")
-    zoom_factor = synced_input("FOV Zoom (x)", 1.0, 5.0, 1.0, 0.5, "zoom")
-    q_max = synced_input("q-space Zoom (Å⁻¹)", 1.0, 8.0, 4.0, 0.5, "qmax")
-    den_contrast = synced_input("Contrast Clip (%)", 0.0, 20.0, 0.0, 1.0, "contrast")
+    theta_deg = st.slider("Twist Angle (deg):", 0.0, max_theta, 0.0, 0.1)
+    zoom_factor = st.slider("FOV Zoom (x):", 1.0, 5.0, 1.0, 0.5)
+    q_max = st.slider("q-space Zoom (Å⁻¹):", 1.0, 8.0, 4.0, 0.5)
+    den_contrast = st.slider("Contrast Clip (%):", 0.0, 20.0, 0.0, 1.0)
 
 # --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
@@ -576,16 +499,9 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# Render 3 Independent Plots so full-screen works per-panel
-fig1, fig2, fig3 = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=True, is_video_frame=False)
-
-pcol1, pcol2, pcol3 = st.columns(3)
-with pcol1:
-    st.pyplot(fig1, clear_figure=True)
-with pcol2:
-    st.pyplot(fig2, clear_figure=True)
-with pcol3:
-    st.pyplot(fig3, clear_figure=True)
+# Render the single unified plot
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+st.pyplot(fig)
 
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -601,7 +517,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     
     frames = []
     for ang in range(max_t_int + 1):
-        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, separate_panels=False, is_video_frame=True)
+        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, show_boundaries, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
