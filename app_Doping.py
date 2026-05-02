@@ -5,6 +5,7 @@ from matplotlib.colors import LogNorm
 import matplotlib.lines as mlines
 import scipy.ndimage as ndimage
 import time
+import imageio
 
 # --- PASSWORD PROTECTION ---
 def check_password():
@@ -210,6 +211,24 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
 
     # ------------------------------------------
+    # NEW: ANALYTICAL FWHM AND COVERAGE
+    # ------------------------------------------
+    fwhm_factor = 2 * np.sqrt(np.log(2))
+    w_co = decay_L * fwhm_factor
+    w_ho = decay_L * 1.3 * fwhm_factor
+    w_br = decay_L * 0.8 * fwhm_factor
+
+    strict_mask = (np.abs(vis_top[:, 0]) <= current_fov) & (np.abs(vis_top[:, 1]) <= current_fov)
+    score_co_strict = score_co[strict_mask]
+    score_ho_strict = score_ho[strict_mask]
+    score_br_strict = score_br[strict_mask]
+
+    n_total = max(1, len(score_co_strict))
+    cov_co = np.sum(score_co_strict >= 0.5) / n_total * 100
+    cov_ho = np.sum(score_ho_strict >= 0.5) / n_total * 100
+    cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
+
+    # ------------------------------------------
     # PANEL 1: REGISTRY DOMAINS
     # ------------------------------------------
     ax1.set_xlim(-current_fov, current_fov)
@@ -259,9 +278,12 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
         lr = 0.05 
         A_elec = 0.5 * (w2 - w1)**2 
         
-        my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
+        # Don't show progress bar during video generation to avoid UI clutter
+        show_bar = not hasattr(st.session_state, 'is_rendering_video') or not st.session_state.is_rendering_video
+        if show_bar:
+            my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
+            
         iterations = 120
-        
         for i in range(iterations):
             laplacian = ndimage.laplace(Z_map)
             F_elastic = k_elastic * laplacian
@@ -271,10 +293,11 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
             Z_map = Z_map + lr * (F_elastic + F_vdw + F_elec)
             Z_map = np.clip(Z_map, 1.5, 5.0) 
             
-            if i % 10 == 0:
+            if show_bar and i % 10 == 0:
                 my_bar.progress(int((i / iterations) * 100), text=f"Minimizing Free Energy: Iteration {i}/{iterations}")
                 
-        my_bar.empty()
+        if show_bar:
+            my_bar.empty()
 
     final_zmin, final_zmax = np.min(Z_map), np.max(Z_map)
 
@@ -333,7 +356,6 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', label=label1)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=label2)
     
-    # -- DRAW PRIMARY LATTICE VECTORS AND MOIRÉ VECTORS --
     g1_A = G1_pts[np.argmax(G1_pts[:, 1])]
     g1_B = G1_pts[np.argmax(G1_pts[:, 0])]
     g2_A = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_A, axis=1))]
@@ -342,10 +364,9 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
     for v1, v2 in [(g1_A, g2_A), (g1_B, g2_B)]:
         ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
         ax3.annotate("", xy=v2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="red", lw=1.5))
-        if np.linalg.norm(v2 - v1) > 1e-5: # Prevent drawing zero-length arrows at 0 twist
+        if np.linalg.norm(v2 - v1) > 1e-5: 
             ax3.annotate("", xy=v2, xytext=v1, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
     
-    # Dummy plot to generate the legend entry for the Moiré vector
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vector $\mathbf{q}_M$')
 
     ax3.set_xlim(-q_max, q_max)
@@ -360,12 +381,12 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, m
     if view_mode != 'Raw Lattices':
         legend_elements = []
         if show_all or show_clean or view_mode == 'Coincident Only':
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label='Coincident'))
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label=f'Coincident (W: {w_co:.1f}Å, Cov: {cov_co:.1f}%)'))
         if show_all or show_clean or view_mode == 'Hollow Only':
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label='Hollow'))
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label=f'Hollow (W: {w_ho:.1f}Å, Cov: {cov_ho:.1f}%)'))
         if show_all or view_mode == 'Bridge Only':
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label='Bridge'))
-        ax1.legend(handles=legend_elements, loc='lower right', fontsize=9, framealpha=0.8)
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=f'Bridge (W: {w_br:.1f}Å, Cov: {cov_br:.1f}%)'))
+        ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     ax3.legend(loc='upper right', fontsize=9, framealpha=0.8)
     plt.tight_layout()
@@ -390,7 +411,10 @@ with col3:
     q_max = st.slider("q-space Zoom (Å⁻¹):", 1.0, 8.0, 4.0, 0.5)
     den_contrast = st.slider("Contrast Clip (%):", 0.0, 20.0, 0.0, 1.0)
 
-# --- NEW EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
+# Render the Plot
+fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, "Rigid Lattices (No Relaxation)", 4.2, 4.5, 3.1, 3.6, 0.0, 0.0, 80.0, 0.5) # Defaults overridden below if expanded
+
+# --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
     
     st.markdown("**1. Interfacial Mechanics & Doping Model**")
@@ -438,6 +462,48 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# Render the Plot
+# Re-render plot with proper params if they were modified in the expander
 fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
 st.pyplot(fig)
+
+
+# --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
+st.markdown("---")
+st.markdown("### 🎥 Cinematic Tools")
+
+if st.button("Generate Twist Angle Scan Video (0° to 45°)"):
+    st.session_state.is_rendering_video = True
+    vid_progress = st.progress(0, text="Rendering frame 1 of 46...")
+    
+    frames = []
+    for ang in range(46):
+        # Generate the frame invisibly
+        fig_frame = create_unified_plot(system_mode, float(ang), zoom_factor, q_max, view_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay)
+        
+        # Convert Matplotlib figure to a pixel array
+        fig_frame.canvas.draw()
+        img = np.frombuffer(fig_frame.canvas.tostring_rgb(), dtype='uint8')
+        img = img.reshape(fig_frame.canvas.get_width_height()[::-1] + (3,))
+        frames.append(img)
+        plt.close(fig_frame) # Clean up memory
+        
+        vid_progress.progress(int((ang + 1) / 46 * 100), text=f"Rendering frame {ang+1} of 46...")
+    
+    vid_progress.progress(100, text="Encoding MP4 Video...")
+    imageio.mimsave("moire_twist_scan.mp4", frames, fps=8, macro_block_size=None)
+    vid_progress.empty()
+    st.session_state.is_rendering_video = False
+    
+    st.success("Video Generated Successfully!")
+    
+    # Auto-play loop in full width
+    st.video("moire_twist_scan.mp4", autoplay=True, loop=True)
+    
+    # Download Button
+    with open("moire_twist_scan.mp4", "rb") as file:
+        st.download_button(
+            label="💾 Save Video to Computer",
+            data=file,
+            file_name=f"twist_scan_{system_mode[:4]}.mp4",
+            mime="video/mp4"
+        )
