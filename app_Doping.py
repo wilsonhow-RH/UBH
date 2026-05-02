@@ -315,7 +315,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # FULLY INDEPENDENT MESOSCOPIC ENVELOPES (Fixes missing red/blue domains)
+        # SYMMETRY-PRESERVING ISOTROPIC ENVELOPES
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -337,7 +337,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 
-                radius = int(np.ceil((a_mos2 * 1.1) / dx))
+                # Minimum integer radius to bridge adjacent atomic points
+                radius = int(np.ceil((a_mos2 * 1.5) / dx))
+                
+                # NEW: Generate a strictly circular (isotropic) footprint for the maximum filter
+                y_fp, x_fp = np.ogrid[-radius:radius+1, -radius:radius+1]
+                circular_footprint = x_fp**2 + y_fp**2 <= radius**2
                 
                 x_pad = np.linspace(-pad_fov, pad_fov, N_pad)
                 y_pad = np.linspace(-pad_fov, pad_fov, N_pad)
@@ -347,19 +352,19 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     if not is_shown: continue
                     sc_pad = score[valid_mask]
                     
-                    # Ensure there are actually valid atoms before processing to save time
                     if len(sc_pad) == 0: continue
                     
                     grid_z = np.zeros((N_pad, N_pad))
                     np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
-                    grid_z_dilated = ndimage.maximum_filter(grid_z, size=radius)
-                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.5)
+                    # Use the circular footprint to preserve structural symmetry
+                    grid_z_dilated = ndimage.maximum_filter(grid_z, footprint=circular_footprint)
+                    # Slightly increase smoothing so discrete steps completely melt into the continuum
+                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.0)
                     
                     z_min = np.min(grid_z_meso)
                     z_max = np.max(grid_z_meso)
                     
-                    # Calculate contour strictly relatively for each independent domain
                     if (z_max - z_min) > 1e-5:
                         level = z_min + (z_max - z_min) * 0.5
                         ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
