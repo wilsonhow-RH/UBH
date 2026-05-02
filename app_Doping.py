@@ -9,13 +9,12 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
-import scipy.signal as signal
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
 
 st.title("UHV-bonded Heterostructure Physics Dashboard")
-st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures (by Gemini & Ruihua He, 5/1/26).")
+st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures.")
 
 # --- PASSWORD PROTECTION ---
 def check_password():
@@ -41,7 +40,6 @@ if not check_password():
 # ==========================================
 # 1. PARAMETERS & PRE-COMPUTATION
 # ==========================================
-# CRITICAL FIX: Changed from cache_data to cache_resource to prevent deep-copying massive arrays
 @st.cache_resource
 def generate_base_grids():
     a_sto, a_fese, a_mos2, a_bise, a_g = 3.905, 3.905, 3.15, 4.14, 2.46          
@@ -199,13 +197,14 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
         label1, label2 = r"Layer 1 (Bi$_2$Se$_3$)", r"Layer 2 (MoS$_2$)"
+        V_sub, invV_sub = V_bise, invV_bise
         
         mask_sub = (np.abs(pts_bise_base[:, 0]) < current_fov) & (np.abs(pts_bise_base[:, 1]) < current_fov)
         vis_base = pts_bise_base[mask_sub]
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_bise, invV_bise)
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
@@ -215,13 +214,14 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Graphene' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on Graphene", 0.25 * a_g 
         label1, label2 = r"Layer 1 (Graphene)", r"Layer 2 (MoS$_2$)"
+        V_sub, invV_sub = V_g, invV_g
         
         mask_sub = (np.abs(pts_grap_base[:, 0]) < current_fov) & (np.abs(pts_grap_base[:, 1]) < current_fov)
         vis_base = pts_grap_base[mask_sub]
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_g, invV_g)
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
@@ -232,13 +232,14 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         title_str, decay_L = "Magic-Angle Twisted Bilayer Graphene", 0.25 * a_g
         label1, label2 = "Layer 1 (Graphene)", "Layer 2 (Rotated)"
         layer2_Cq = 0.002 
+        V_sub, invV_sub = V_g, invV_g
         
         mask_sub = (np.abs(pts_grap_base[:, 0]) < current_fov) & (np.abs(pts_grap_base[:, 1]) < current_fov)
         vis_base = pts_grap_base[mask_sub]
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
-        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_g, invV_g)
+        dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
@@ -246,22 +247,31 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
 
     # ------------------------------------------
-    # ANALYTICAL FWHM AND COVERAGE
+    # SPEEDUP: CONDITIONAL LEGEND COVERAGE
     # ------------------------------------------
-    fwhm_factor = 2 * np.sqrt(np.log(2))
-    w_co = decay_L * fwhm_factor
-    w_ho = decay_L * 1.3 * fwhm_factor
-    w_br = decay_L * 0.8 * fwhm_factor
+    if boundary_mode != 'None':
+        fwhm_factor = 2 * np.sqrt(np.log(2))
+        w_co = decay_L * fwhm_factor
+        w_ho = decay_L * 1.3 * fwhm_factor
+        w_br = decay_L * 0.8 * fwhm_factor
 
-    strict_mask = (np.abs(vis_top[:, 0]) <= current_fov) & (np.abs(vis_top[:, 1]) <= current_fov)
-    score_co_strict = score_co[strict_mask]
-    score_ho_strict = score_ho[strict_mask]
-    score_br_strict = score_br[strict_mask]
+        strict_mask = (np.abs(vis_top[:, 0]) <= current_fov) & (np.abs(vis_top[:, 1]) <= current_fov)
+        score_co_strict = score_co[strict_mask]
+        score_ho_strict = score_ho[strict_mask]
+        score_br_strict = score_br[strict_mask]
 
-    n_total = max(1, len(score_co_strict))
-    cov_co = np.sum(score_co_strict >= 0.5) / n_total * 100
-    cov_ho = np.sum(score_ho_strict >= 0.5) / n_total * 100
-    cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
+        n_total = max(1, len(score_co_strict))
+        cov_co = np.sum(score_co_strict >= 0.5) / n_total * 100
+        cov_ho = np.sum(score_ho_strict >= 0.5) / n_total * 100
+        cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
+
+        lbl_co = f'Coincident (W: {w_co:.1f}Å, Cov: {cov_co:.1f}%)'
+        lbl_ho = f'Hollow (W: {w_ho:.1f}Å, Cov: {cov_ho:.1f}%)'
+        lbl_br = f'Bridge (W: {w_br:.1f}Å, Cov: {cov_br:.1f}%)'
+    else:
+        lbl_co = 'Coincident'
+        lbl_ho = 'Hollow'
+        lbl_br = 'Bridge'
 
     # ------------------------------------------
     # PANEL 1: REGISTRY DOMAINS
@@ -281,69 +291,68 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='dodgerblue', alpha=0.5)
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=2, color='crimson', alpha=0.5)
     else:
-        # Faint underlying grids
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='gray', alpha=0.3, marker=',')
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05, marker=',')
         
-        # CRITICAL RENDERING FIX: Masking out low-score points reduces Matplotlib render times by ~90%
         if show_co_dom:
             mask_co = score_co > 0.05
             if np.any(mask_co):
                 c_co = np.zeros((np.sum(mask_co), 4))
-                c_co[:, 0], c_co[:, 1], c_co[:, 2] = 1.0, 0.2, 0.3
-                c_co[:, 3] = score_co[mask_co]
+                c_co[:, 0], c_co[:, 1], c_co[:, 2], c_co[:, 3] = 1.0, 0.2, 0.3, score_co[mask_co]
                 ax1.scatter(vis_top[mask_co, 0], vis_top[mask_co, 1], s=base_size * score_co[mask_co], c=c_co, edgecolors='none')
                 
         if show_ho_dom:
             mask_ho = score_ho > 0.05
             if np.any(mask_ho):
                 c_ho = np.zeros((np.sum(mask_ho), 4))
-                c_ho[:, 0], c_ho[:, 1], c_ho[:, 2] = 0.1, 0.6, 1.0
-                c_ho[:, 3] = score_ho[mask_ho]
+                c_ho[:, 0], c_ho[:, 1], c_ho[:, 2], c_ho[:, 3] = 0.1, 0.6, 1.0, score_ho[mask_ho]
                 ax1.scatter(vis_top[mask_ho, 0], vis_top[mask_ho, 1], s=base_size * score_ho[mask_ho], c=c_ho, edgecolors='none')
                 
         if show_br_dom:
             mask_br = score_br > 0.05
             if np.any(mask_br):
                 c_br = np.zeros((np.sum(mask_br), 4))
-                c_br[:, 0], c_br[:, 1], c_br[:, 2] = 0.2, 0.8, 0.2
-                c_br[:, 3] = score_br[mask_br]
+                c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
+        # NEW CONTINUOUS ANALYTICAL MESOSCOPIC BOUNDARIES
         if boundary_mode != "None":
-            try:
+            if boundary_mode == "Microscopic (Atomic)":
+                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
                 domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                                 (score_ho, '#66b3ff', show_ho_dom), 
                                 (score_br, '#66ff66', show_br_dom)]
-                
-                if boundary_mode == "Microscopic (Atomic)":
-                    triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
-                    for score, color, is_shown in domain_pairs:
-                        if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
-                        
-                elif boundary_mode == "Mesoscopic (Envelope)":
-                    dx = (current_fov * 2) / N_den
-                    ix = np.clip(np.round((vis_top[:, 0] + current_fov) / dx).astype(int), 0, N_den - 1)
-                    iy = np.clip(np.round((vis_top[:, 1] + current_fov) / dx).astype(int), 0, N_den - 1)
+                for score, color, is_shown in domain_pairs:
+                    if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
                     
-                    radius = max(2.0, (a_mos2 * 1.5) / dx)
-                    k_size = int(np.ceil(radius * 3))
-                    kx = np.arange(-k_size, k_size + 1)
-                    k_grid_x, k_grid_y = np.meshgrid(kx, kx)
-                    kernel = np.exp(-(k_grid_x**2 + k_grid_y**2) / (2 * (radius)**2))
-                    
-                    for score, color, is_shown in domain_pairs:
-                        if not is_shown: continue
-                        grid_z = np.zeros((N_den, N_den))
-                        np.maximum.at(grid_z, (iy, ix), score) 
-                        
-                        grid_z_meso = signal.fftconvolve(grid_z, kernel, mode='same')
-                        
-                        if np.max(grid_z_meso) > 1e-5:
-                            grid_z_meso = grid_z_meso / np.max(grid_z_meso)
-                            ax1.contour(X_den, Y_den, grid_z_meso, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
-            except Exception:
-                pass 
+            elif boundary_mode == "Mesoscopic (Envelope)":
+                if 'Hex-on-Square' in system_mode:
+                    nx_g = np.round(X_den / a_sub) * a_sub
+                    ny_g = np.round(Y_den / a_sub) * a_sub
+                    dist_co_g = np.sqrt((X_den - nx_g)**2 + (Y_den - ny_g)**2)
+
+                    cx_g = np.floor(X_den / a_sub) * a_sub + a_sub/2
+                    cy_g = np.floor(Y_den / a_sub) * a_sub + a_sub/2
+                    dist_ho_g = np.sqrt((X_den - cx_g)**2 + (Y_den - cy_g)**2)
+
+                    dist_br_g = np.minimum(np.sqrt((X_den - cx_g)**2 + (Y_den - ny_g)**2), np.sqrt((X_den - nx_g)**2 + (Y_den - cy_g)**2))
+                else:
+                    f_g = np.stack([X_den.ravel(), Y_den.ravel()], axis=1).dot(invV_sub.T)
+                    dist_co_g = min_hex_dist(f_g, V_sub).reshape(X_den.shape)
+                    dist_ho_g = np.minimum(min_hex_dist(f_g - np.array([1/3, 1/3]), V_sub), min_hex_dist(f_g - np.array([2/3, 2/3]), V_sub)).reshape(X_den.shape)
+                    dist_br_g = np.minimum(np.minimum(min_hex_dist(f_g - np.array([0.5, 0.0]), V_sub), min_hex_dist(f_g - np.array([0.0, 0.5]), V_sub)), min_hex_dist(f_g - np.array([0.5, -0.5]), V_sub)).reshape(X_den.shape)
+
+                score_co_g = np.exp(-(dist_co_g/decay_L)**2)
+                score_ho_g = np.exp(-(dist_ho_g/(decay_L*1.3))**2)
+                score_br_g = np.exp(-(dist_br_g/(decay_L*0.8))**2)
+
+                domain_pairs_g = [(score_co_g, '#ff6666', show_co_dom),
+                                  (score_ho_g, '#66b3ff', show_ho_dom),
+                                  (score_br_g, '#66ff66', show_br_dom)]
+
+                for score_g, color, is_shown in domain_pairs_g:
+                    if is_shown:
+                        ax1.contour(X_den, Y_den, score_g, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
 
     transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
@@ -371,10 +380,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         lr = 0.05 / (1.0 + k_elastic * 10) 
         A_elec = 0.5 * (w2 - w1)**2 
         
-        show_bar = not is_video_frame
-        if show_bar:
-            my_bar = st.progress(0, text="Solving Euler-Lagrange PDE...")
-            
         iterations = 120 if is_video_frame else 50
         for i in range(iterations):
             laplacian = ndimage.laplace(Z_map)
@@ -384,13 +389,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             
             Z_map = Z_map + lr * (F_elastic + F_vdw + F_elec)
             Z_map = np.clip(Z_map, 1.5, 5.0) 
-            
-            # Less frequent frontend updates to reduce lag
-            if show_bar and i % 25 == 0:
-                my_bar.progress(int((i / iterations) * 100), text=f"Minimizing Free Energy: Iteration {i}/{iterations}")
-                
-        if show_bar:
-            my_bar.empty()
 
     final_zmin, final_zmax = np.min(Z_map), np.max(Z_map)
 
@@ -480,11 +478,11 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if view_mode != 'Raw Lattices':
         legend_elements = []
         if show_co_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label=f'Coincident (W: {w_co:.1f}Å, Cov: {cov_co:.1f}%)'))
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label=lbl_co))
         if show_ho_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label=f'Hollow (W: {w_ho:.1f}Å, Cov: {cov_ho:.1f}%)'))
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label=lbl_ho))
         if show_br_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=f'Bridge (W: {w_br:.1f}Å, Cov: {cov_br:.1f}%)'))
+            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     ax3.legend(loc='upper right', fontsize=9, framealpha=0.8)
@@ -561,9 +559,13 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     with ecol2:
         eph_decay = st.number_input("Evanescent Decay Length $\lambda$ (Å)", value=0.5, step=0.1)
 
-# Render the single unified plot
-fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
-st.pyplot(fig)
+# Render the single unified plot with a locking spinner container
+dashboard_placeholder = st.empty()
+
+with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
+    with dashboard_placeholder.container():
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+        st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
 st.markdown("---")
