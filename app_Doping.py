@@ -34,15 +34,13 @@ def check_password():
 if not check_password():
     st.stop()
 
-# --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX (FIXED) ---
+# --- CUSTOM UI WIDGET: SYNCED SLIDER & TEXT BOX ---
 def synced_input(label, min_val, max_val, default_val, step, key):
-    # Initialize keys if they don't exist
     if f"{key}_slider" not in st.session_state:
         st.session_state[f"{key}_slider"] = float(default_val)
     if f"{key}_num" not in st.session_state:
         st.session_state[f"{key}_num"] = float(default_val)
 
-    # Cross-bind the callbacks so they update each other directly
     def sync_from_slider():
         st.session_state[f"{key}_num"] = st.session_state[f"{key}_slider"]
     def sync_from_num():
@@ -345,14 +343,14 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
             except Exception:
                 pass 
 
-    # FIXED: Make the colorbar completely transparent instead of invisible, so Matplotlib calculates identical padding
+    # FIXED: Matplotlib layout alignment fix for invisible colorbars (uses set_facecolor)
     sm = plt.cm.ScalarMappable(cmap='gray', norm=plt.Normalize(vmin=0, vmax=1))
     sm._A = []
     cbar1 = fig1.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04) if separate_panels else fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
     cbar1.set_label('                               ', color='none') 
-    cbar1.patch.set_alpha(0.0) 
+    cbar1.ax.set_facecolor('none')
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -450,16 +448,19 @@ def create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, b
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=label2)
     
     g1_A = G1_pts[np.argmax(G1_pts[:, 1])]
-    g1_B = G1_pts[np.argmax(G1_pts[:, 0])]
-    g2_A = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_A, axis=1))]
-    g2_B = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_B, axis=1))]
+    g1_B = G1_pts[np.argmax(G1_pts[:, 1])] if len(G1_pts) > 0 else g1_A
+    try:
+        g1_B = G1_pts[np.argmax(G1_pts[:, 0])]
+        g2_A = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_A, axis=1))]
+        g2_B = G2_pts[np.argmin(np.linalg.norm(G2_pts - g1_B, axis=1))]
 
-    for v1, v2 in [(g1_A, g2_A), (g1_B, g2_B)]:
-        ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
-        ax3.annotate("", xy=v2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="red", lw=1.5))
-        if np.linalg.norm(v2 - v1) > 1e-5: 
-            ax3.annotate("", xy=v2, xytext=v1, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
-    
+        for v1, v2 in [(g1_A, g2_A), (g1_B, g2_B)]:
+            ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
+            ax3.annotate("", xy=v2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="red", lw=1.5))
+            if np.linalg.norm(v2 - v1) > 1e-5: 
+                ax3.annotate("", xy=v2, xytext=v1, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
+    except:
+        pass
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vector $\mathbf{q}_M$')
 
     ax3.set_xlim(-q_max, q_max)
