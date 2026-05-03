@@ -159,12 +159,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # GridSpec overrides simple subplots to elegantly compress spacing and expand Panel 3
-    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1.4], wspace=0.05, left=0.02, right=0.98, bottom=0.1, top=0.85)
+    # NEW: Asymmetric GridSpec. Panel 1 and 2 are tightly packed. The 0.2 dummy column creates a large gap before Panel 3.
+    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.2, 1], wspace=0.02, left=0.02, right=0.88, bottom=0.1, top=0.85)
     
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[2])
+    ax3 = fig.add_subplot(gs[3])
     axes = [ax1, ax2, ax3]
     
     for ax in axes:
@@ -390,7 +390,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.78, pad=0.04)
+    
+    # NEW: Colorbars drastically shortened with shrink=0.45
+    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04)
     cbar1.ax.set_facecolor('none')  
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
@@ -438,7 +440,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Relative Interfacial Density', color='white')
         
@@ -456,7 +458,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -467,7 +469,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.78, pad=0.04)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -487,8 +489,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     
-    ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', label=f'{label1} Peaks', zorder=3)
-    ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=f'{label2} Peaks', zorder=3)
+    ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
+    ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
     
     g1_A = G1_pts[np.argmax(G1_pts[:, 1])]
     g1_B = G1_pts[np.argmax(G1_pts[:, 0])] if len(G1_pts) > 0 else g1_A
@@ -504,19 +506,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     except:
         pass
         
-    ax3.plot([], [], color='cyan', linestyle=':', lw=1.5, label='Layer 1 1st BZ')
-    ax3.plot([], [], color='red', linestyle=':', lw=1.5, label='Layer 2 1st BZ')
-    ax3.plot([], [], color='cyan', linestyle='-', lw=1.5, label=r'Reciprocal Vector $\mathbf{g}_1$')
-    ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Reciprocal Vector $\mathbf{g}_2$')
-    ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vector $\mathbf{q}_M$')
-
-    # Asymmetric x-limits to reserve empty space for the robust legend
-    ax3.set_xlim(-q_max, q_max * 1.8)
+    # NEW: Symmetric x-axis mapping ensures title centers perfectly on the image data
+    ax3.set_xlim(-q_max, q_max)
     ax3.set_ylim(-q_max, q_max)
     ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
-    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.78, pad=0.04)
+    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04)
     cbar3.ax.tick_params(colors='white')
     cbar3.set_label('Scattering Intensity (a.u.)', color='white')
     
@@ -530,7 +526,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
-    ax3.legend(loc='center right', fontsize=9, framealpha=0.8, ncol=1)
+    # Formatting shortened labels for the slim legend
+    lbl1_short = 'SrTiO₃' if 'SrTiO₃' in label1 else ('FeSe' if 'FeSe' in label1 else ('Bi₂Se₃' if 'Bi₂Se₃' in label1 else 'Graphene'))
+    lbl2_short = 'MoS₂' if 'MoS₂' in label2 else 'Rotated'
+
+    # Mapping proxy artists for the slim legend
+    ax3.plot([], [], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short}\nPeaks')
+    ax3.plot([], [], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short}\nPeaks')
+    ax3.plot([], [], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short}\n1st BZ')
+    ax3.plot([], [], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short}\n1st BZ')
+    ax3.plot([], [], color='cyan', linestyle='-', lw=1.5, label='Recip. Vec.\n$\mathbf{g}_1$')
+    ax3.plot([], [], color='red', linestyle='-', lw=1.5, label='Recip. Vec.\n$\mathbf{g}_2$')
+    ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label='Moiré Vec.\n$\mathbf{q}_M$')
+
+    # NEW: Slim, line-broken legend anchored cleanly in the top right corner
+    ax3.legend(loc='upper left', bbox_to_anchor=(1.25, 1.12), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
         
     return fig
 
