@@ -126,6 +126,22 @@ def get_hex_G(a, theta_deg):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_G.dot(R.T)
 
+def get_square_bz(a, theta_deg=0.0):
+    q = 2 * np.pi / a
+    base_bz = np.array([[q/2, q/2], [-q/2, q/2], [-q/2, -q/2], [q/2, -q/2], [q/2, q/2]])
+    th = np.radians(theta_deg)
+    R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+    return base_bz.dot(R.T)
+
+def get_hex_bz(a, theta_deg=0.0):
+    q = 4 * np.pi / (np.sqrt(3) * a)
+    R_bz = q / np.sqrt(3)
+    angles = np.radians([0, 60, 120, 180, 240, 300, 360])
+    base_bz = np.array([[R_bz * np.cos(ang), R_bz * np.sin(ang)] for ang in angles])
+    th = np.radians(theta_deg)
+    R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
+    return base_bz.dot(R.T)
+
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
@@ -193,6 +209,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
         T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_square_G(a_sub), get_hex_G(a_mos2, theta_deg)
+        BZ1_pts, BZ2_pts = get_square_bz(a_sub, 0.0), get_hex_bz(a_mos2, theta_deg)
 
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
@@ -210,6 +227,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
         T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_bise, 0.0), get_hex_G(a_mos2, theta_deg)
+        BZ1_pts, BZ2_pts = get_hex_bz(a_bise, 0.0), get_hex_bz(a_mos2, theta_deg)
 
     elif 'Graphene' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on Graphene", 0.25 * a_g 
@@ -227,6 +245,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
         T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_mos2, theta_deg)
+        BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_mos2, theta_deg)
 
     else: 
         title_str, decay_L = "Magic-Angle Twisted Bilayer Graphene", 0.25 * a_g
@@ -245,6 +264,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
         T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
+        BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_g, theta_deg)
 
     # ------------------------------------------
     # SPEEDUP: CONDITIONAL LEGEND COVERAGE
@@ -315,7 +335,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        # SYMMETRY-PRESERVING ISOTROPIC ENVELOPES
         if boundary_mode != "None":
             domain_pairs = [(score_co, '#ff6666', show_co_dom), 
                             (score_ho, '#66b3ff', show_ho_dom), 
@@ -337,10 +356,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
                 
-                # Minimum integer radius to bridge adjacent atomic points
                 radius = int(np.ceil((a_mos2 * 1.5) / dx))
                 
-                # NEW: Generate a strictly circular (isotropic) footprint for the maximum filter
                 y_fp, x_fp = np.ogrid[-radius:radius+1, -radius:radius+1]
                 circular_footprint = x_fp**2 + y_fp**2 <= radius**2
                 
@@ -357,9 +374,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                     grid_z = np.zeros((N_pad, N_pad))
                     np.maximum.at(grid_z, (iy, ix), sc_pad) 
                     
-                    # Use the circular footprint to preserve structural symmetry
                     grid_z_dilated = ndimage.maximum_filter(grid_z, footprint=circular_footprint)
-                    # Slightly increase smoothing so discrete steps completely melt into the continuum
                     grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.0)
                     
                     z_min = np.min(grid_z_meso)
@@ -465,8 +480,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
     im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-7, vmax=np.max(intensity)))
-    ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', label=label1)
-    ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=label2)
+    
+    # NEW: Plot 1st Brillouin Zone boundaries
+    ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
+    ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
+    
+    ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', label=label1, zorder=3)
+    ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=label2, zorder=3)
     
     g1_A = G1_pts[np.argmax(G1_pts[:, 1])]
     g1_B = G1_pts[np.argmax(G1_pts[:, 0])] if len(G1_pts) > 0 else g1_A
