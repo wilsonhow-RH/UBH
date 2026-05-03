@@ -159,12 +159,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # Asymmetric layout restoring the spacer column to separate Panel 3
-    gs = fig.add_gridspec(1, 4, width_ratios=[1, 1, 0.2, 1], wspace=0.02, left=0.02, right=0.82, bottom=0.1, top=0.85)
+    # 5-column asymmetrical GridSpec. 
+    # Left spacer (0.10) is slightly smaller than right spacer (0.15) to slide Panel 2 right, evening out the visual gaps.
+    gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.10, 1, 0.15, 1], wspace=0.0, left=0.02, right=0.82, bottom=0.1, top=0.85)
     
     ax1 = fig.add_subplot(gs[0])
-    ax2 = fig.add_subplot(gs[1])
-    ax3 = fig.add_subplot(gs[3])
+    ax2 = fig.add_subplot(gs[2])
+    ax3 = fig.add_subplot(gs[4])
     axes = [ax1, ax2, ax3]
     
     for ax in axes:
@@ -392,7 +393,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     sm._A = []
     
     # Bottom aligned flush colorbars
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.03, anchor=(0.0, 0.0))
+    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
     cbar1.ax.set_facecolor('none')  
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
@@ -536,7 +537,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$')
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vec. $\mathbf{q}_M$')
 
-    # Top right anchored strictly outside the axes
+    # Top right anchored outside the axes (above the bottom-aligned colorbar)
     ax3.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
         
     return fig
