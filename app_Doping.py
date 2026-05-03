@@ -159,8 +159,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # perfectly symmetric grid, proper right margin for legend integration
-    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1], wspace=0.12, left=0.02, right=0.82, bottom=0.1, top=0.85)
+    # Perfectly symmetric grid, proper right margin for legend integration
+    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1], wspace=0.12, left=0.02, right=0.78, bottom=0.1, top=0.85)
     
     ax1 = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1])
@@ -391,8 +391,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
     
-    # Bottom-anchored colorbar leaves room for legends above if needed
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+    # Colorbars explicitly aligned with the center of the y-axis
+    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.5))
     cbar1.ax.set_facecolor('none')  
     cbar1.outline.set_visible(False)
     cbar1.ax.tick_params(colors='none') 
@@ -440,7 +440,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.5))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Relative Interfacial Density', color='white')
         
@@ -458,7 +458,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.5))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -469,7 +469,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.5))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -506,14 +506,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     except:
         pass
         
-    # Strictly square symmetric x and y limits
     ax3.set_xlim(-q_max, q_max)
     ax3.set_ylim(-q_max, q_max)
     ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
-    # Bottom-anchored colorbar
-    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.5))
     cbar3.ax.tick_params(colors='white')
     cbar3.set_label('Scattering Intensity (a.u.)', color='white')
     
@@ -530,7 +528,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl1_short = 'SrTiO₃' if 'SrTiO₃' in label1 else ('FeSe' if 'FeSe' in label1 else ('Bi₂Se₃' if 'Bi₂Se₃' in label1 else 'Graphene'))
     lbl2_short = 'MoS₂' if 'MoS₂' in label2 else 'Rotated'
 
-    # Flattened text for exact mockup mapping
     ax3.plot([], [], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks')
     ax3.plot([], [], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks')
     ax3.plot([], [], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short} 1st BZ')
@@ -539,7 +536,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$')
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vec. $\mathbf{q}_M$')
 
-    # Top-right anchored outside the axes (above the bottom-aligned colorbar)
     ax3.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
         
     return fig
@@ -618,7 +614,8 @@ dashboard_placeholder = st.empty()
 
 with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
     with dashboard_placeholder.container():
-        fig = create_unified_plot(system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+        # Corrected method signature Call 1
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
         st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -639,6 +636,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     for ang in range(max_t_int + 1):
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
+        # Corrected method signature Call 2
         fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
         
         fig_frame.canvas.draw()
