@@ -159,9 +159,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    ax1 = fig.add_subplot(131)
-    ax2 = fig.add_subplot(132)
-    ax3 = fig.add_subplot(133)
+    # GridSpec overrides simple subplots to elegantly compress spacing and expand Panel 3
+    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1, 1.4], wspace=0.05, left=0.02, right=0.98, bottom=0.1, top=0.85)
+    
+    ax1 = fig.add_subplot(gs[0])
+    ax2 = fig.add_subplot(gs[1])
+    ax3 = fig.add_subplot(gs[2])
     axes = [ax1, ax2, ax3]
     
     for ax in axes:
@@ -484,7 +487,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     
-    # Updated scatter labels to identify them as peaks
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', label=f'{label1} Peaks', zorder=3)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', label=f'{label2} Peaks', zorder=3)
     
@@ -502,14 +504,14 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     except:
         pass
         
-    # NEW explicit legend components for arrows and BZ boundaries
     ax3.plot([], [], color='cyan', linestyle=':', lw=1.5, label='Layer 1 1st BZ')
     ax3.plot([], [], color='red', linestyle=':', lw=1.5, label='Layer 2 1st BZ')
     ax3.plot([], [], color='cyan', linestyle='-', lw=1.5, label=r'Reciprocal Vector $\mathbf{g}_1$')
     ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Reciprocal Vector $\mathbf{g}_2$')
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vector $\mathbf{q}_M$')
 
-    ax3.set_xlim(-q_max, q_max)
+    # Asymmetric x-limits to reserve empty space for the robust legend
+    ax3.set_xlim(-q_max, q_max * 1.8)
     ax3.set_ylim(-q_max, q_max)
     ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
@@ -528,10 +530,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
-    # Updated Legend configuration for Panel 3
-    ax3.legend(loc='upper right', fontsize=8, framealpha=0.8, ncol=2)
-    
-    fig.subplots_adjust(left=0.03, right=0.97, bottom=0.1, top=0.85, wspace=0.15)
+    ax3.legend(loc='center right', fontsize=9, framealpha=0.8, ncol=1)
         
     return fig
 
