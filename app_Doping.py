@@ -13,7 +13,8 @@ import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
 
-st.title("UHV-bonded Heterostructure Physics Dashboard")
+# NEW: Custom markdown title to allow inline HTML styling for the version date
+st.markdown("# UHV-bonded Heterostructure Physics Dashboard <span style='font-size: 20px; font-weight: normal; color: #888888;'>v. May 16, 2026</span>", unsafe_allow_html=True)
 st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures.")
 
 # --- PASSWORD PROTECTION ---
@@ -159,7 +160,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # Restored Point 4 Layout
     gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.88, bottom=0.1, top=0.88)
     
     ax1 = fig.add_subplot(gs[0])
@@ -326,7 +326,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax1.set_xlim(-current_fov, current_fov)
     ax1.set_ylim(-current_fov, current_fov)
     
-    # Combined Update: Calculate L1/L2 ratio and inject into the Panel 1 subtitle
     panel1_subtitle = f"{title_str} | FOV: {zoom_factor}x"
     if L1 is not None and L2 is not None:
         norm_l1 = np.linalg.norm(L1)
@@ -420,7 +419,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                         level = z_min + (z_max - z_min) * 0.5
                         ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
 
-    # Combined Update: Plot real-space Supercell and label exactly at the midpoints
     if L1 is not None and L2 is not None:
         if np.linalg.norm(L1) < current_fov * 10 and np.linalg.norm(L2) < current_fov * 10:
             cell_x = [0, L1[0], L1[0]+L2[0], L2[0], 0]
@@ -443,7 +441,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
     sm._A = []
     
-    # Restored Point 4: Bottom-anchored colorbar
     cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
     cbar1.ax.set_facecolor('none')  
     cbar1.outline.set_visible(False)
@@ -544,7 +541,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
     
-    # Combined Update: Plot reciprocal difference vectors and label at the midpoints
     if g1_A is not None and g2_A is not None:
         for i, (v1, v2) in enumerate([(g1_A, g2_A), (g1_B, g2_B)]):
             ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
@@ -574,10 +570,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         if show_br_dom:
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         
-        # Combined Update: Native line break integrated into the legend text
-        if L1 is not None and L2 is not None:
-            legend_elements.append(mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=2.0, label='Moiré Supercell\n' + r'($\mathbf{L}_{M1}, \mathbf{L}_{M2}$)'))
-
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     lbl1_short = 'SrTiO₃' if 'SrTiO₃' in label1 else ('FeSe' if 'FeSe' in label1 else ('Bi₂Se₃' if 'Bi₂Se₃' in label1 else 'Graphene'))
@@ -589,8 +581,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot([], [], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short} 1st BZ')
     ax3.plot([], [], color='cyan', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_1$')
     ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$')
-    
-    # Combined Update: Panel 3 explicitly matches the q_M syntax
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
 
     ax3.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
