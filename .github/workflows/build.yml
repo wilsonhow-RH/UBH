@@ -37,7 +37,7 @@ jobs:
       # 4. Build the executable using PyInstaller
       # REPLACE 'main.py' with the actual name of your script!
       - name: Build with PyInstaller
-        run: pyinstaller --onefile --name my_app_${{ runner.os }} main.py
+        run: pyinstaller --onefile --name my_app_${{ runner.os }} app_Doping.py
 
       # 5. Upload the compiled executable so you can download it
       - name: Upload Artifact
