@@ -1,80 +1,49 @@
-name: Build Multi-Platform Executables
+name: Build Python Executables
 
+# This tells GitHub to run the workflow when you push to the main branch
 on:
   push:
-    branches: [ main, master ]
-    tags:
-      - 'v*'  # Triggers on version tags like v1.0.0
-  workflow_dispatch:  # Allows manual triggering
+    branches: [ "main" ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    name: Build on ${{ matrix.os }}
+    # This matrix tells GitHub to run this job three times, once on each OS
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        arch: [x64]  # Add x86 if you need 32-bit builds
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup build environment
-        # Replace with your language-specific setup
-        run: |
-          echo "Setting up Windows build environment"
-      
-      - name: Build executable
-        run: |
-          # Replace this with your actual build command
-          # For .NET: dotnet publish -c Release -r win-x64 --self-contained
-          # For Go: go build -o myapp.exe
-          echo "Building Windows executable..."
-      
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-app
-          path: |
-            **/*.exe
-            # Add other file patterns if needed
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
-  build-macos:
-    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup build environment
-        run: |
-          echo "Setting up macOS build environment"
-      
-      - name: Build macOS executable
-        run: |
-          # Replace with your macOS build command
-          echo "Building macOS executable..."
-      
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-app
-          path: |
-            **/*.app
-            **/myapp  # macOS binary path
+      # 1. Check out the code from your repository
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup build environment
+      # 2. Set up Python (you can change the version to match what you use)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' 
+
+      # 3. Install your dependencies and PyInstaller
+      - name: Install Dependencies
         run: |
-          echo "Setting up Linux build environment"
-      
-      - name: Build Linux executable
-        run: |
-          # Replace with your Linux build command
-          echo "Building Linux executable..."
-      
-      - name: Upload Linux artifact
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r requirements.txt
+
+      # 4. Build the executable using PyInstaller
+      # REPLACE 'main.py' with the actual name of your script!
+      - name: Build with PyInstaller
+        run: pyinstaller --onefile --name my_app_${{ runner.os }} main.py
+
+      # 5. Upload the compiled executable so you can download it
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: linux-app
-          path: |
-            **/myapp  # Linux binary path
+          name: executable-${{ runner.os }}
+          path: dist/*
+          # Optional: How long GitHub keeps the files (default is 90 days)
+          retention-days: 5
