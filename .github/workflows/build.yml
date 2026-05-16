@@ -1,0 +1,80 @@
+name: Build Multi-Platform Executables
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64]  # Add x86 if you need 32-bit builds
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        # Replace with your language-specific setup
+        run: |
+          echo "Setting up Windows build environment"
+      
+      - name: Build executable
+        run: |
+          # Replace this with your actual build command
+          # For .NET: dotnet publish -c Release -r win-x64 --self-contained
+          # For Go: go build -o myapp.exe
+          echo "Building Windows executable..."
+      
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-app
+          path: |
+            **/*.exe
+            # Add other file patterns if needed
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        run: |
+          echo "Setting up macOS build environment"
+      
+      - name: Build macOS executable
+        run: |
+          # Replace with your macOS build command
+          echo "Building macOS executable..."
+      
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-app
+          path: |
+            **/*.app
+            **/myapp  # macOS binary path
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup build environment
+        run: |
+          echo "Setting up Linux build environment"
+      
+      - name: Build Linux executable
+        run: |
+          # Replace with your Linux build command
+          echo "Building Linux executable..."
+      
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-app
+          path: |
+            **/myapp  # Linux binary path
