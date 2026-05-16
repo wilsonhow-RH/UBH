@@ -324,6 +324,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 1: REGISTRY DOMAINS
     # ------------------------------------------
+    ax1.set_xlim(-current_fov, current_fov)
+    ax1.set_ylim(-current_fov, current_fov)
     ax1.set_title(f"Topology (Registry Map)\n{title_str} | FOV: {zoom_factor}x", color='white', fontsize=13)
     ax1.set_xlabel(r"Distance ($\AA$)", color='white')
     ax1.set_ylabel(r"Distance ($\AA$)", color='white')
@@ -410,7 +412,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                         level = z_min + (z_max - z_min) * 0.5
                         ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
 
-    # NEW: Plot Moiré Supercell and dynamically offset labels radially
+    # NEW: Plot Moiré Supercell and place labels exactly at the midpoints
     if L1 is not None and L2 is not None:
         if np.linalg.norm(L1) < current_fov * 10 and np.linalg.norm(L2) < current_fov * 10:
             cell_x = [0, L1[0], L1[0]+L2[0], L2[0], 0]
@@ -420,17 +422,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             ax1.annotate("", xy=L1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
             ax1.annotate("", xy=L2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
             
-            # Dynamic offsets pushing strictly outward along the vector trajectory by 8% of the FOV
-            norm_L1 = np.linalg.norm(L1)
-            dir_L1 = L1 / norm_L1 if norm_L1 != 0 else np.array([1, 1])
-            offset_L1 = dir_L1 * (current_fov * 0.08)
+            mid_L1 = L1 / 2.0
+            mid_L2 = L2 / 2.0
             
-            norm_L2 = np.linalg.norm(L2)
-            dir_L2 = L2 / norm_L2 if norm_L2 != 0 else np.array([1, 1])
-            offset_L2 = dir_L2 * (current_fov * 0.08)
-            
-            ax1.annotate(r"$\mathbf{L}_{M1}$", xy=L1, xytext=L1 + offset_L1, color="yellow", fontsize=11, fontweight="bold", ha='center', va='center')
-            ax1.annotate(r"$\mathbf{L}_{M2}$", xy=L2, xytext=L2 + offset_L2, color="yellow", fontsize=11, fontweight="bold", ha='center', va='center')
+            # Text anchored to the midpoints with a subtle 5-point offset to avoid drawing right over the arrow shaft
+            ax1.annotate(r"$\mathbf{L}_{M1}$", xy=mid_L1, xytext=(5, 5), textcoords="offset points", color="yellow", fontsize=11, fontweight="bold")
+            ax1.annotate(r"$\mathbf{L}_{M2}$", xy=mid_L2, xytext=(5, 5), textcoords="offset points", color="yellow", fontsize=11, fontweight="bold")
 
     ax1.set_xlim(-current_fov, current_fov)
     ax1.set_ylim(-current_fov, current_fov)
@@ -568,7 +565,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         if show_br_dom:
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         
-        # NEW: Added a \n string break to strictly wrap the text in the legend box
         if L1 is not None and L2 is not None:
             legend_elements.append(mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=2.0, label='Moiré Supercell\n' + r'($\mathbf{L}_{M1}, \mathbf{L}_{M2}$)'))
 
@@ -678,7 +674,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     vid_progress = st.progress(0, text=f"Rendering frame 1 of {max_t_int + 1}...")
     
     frames = []
-    video_fig = Figure(figsize=(21, 8.5), dpi=100) 
+    video_fig = Figure(figsize=(21, 6.5), dpi=100) 
     FigureCanvasAgg(video_fig)
     
     for ang in range(max_t_int + 1):
