@@ -34,12 +34,12 @@ jobs:
       # BUILD STEP FOR WINDOWS
       - name: Build with PyInstaller (Windows)
         if: runner.os == 'Windows'
-        run: pyinstaller --onefile --name my_app_${{ runner.os }} --copy-metadata streamlit --collect-data streamlit --add-data "app_Doping.py;." run_app.py
+        run: pyinstaller --onefile --name my_app_${{ runner.os }} --copy-metadata streamlit --collect-data streamlit --hidden-import streamlit.runtime.scriptrunner.magic_funcs --add-data "app_Doping.py;." run_app.py
 
       # BUILD STEP FOR MAC & LINUX
       - name: Build with PyInstaller (Mac/Linux)
         if: runner.os != 'Windows'
-        run: pyinstaller --onefile --name my_app_${{ runner.os }} --copy-metadata streamlit --collect-data streamlit --add-data "app_Doping.py:." run_app.py
+        run: pyinstaller --onefile --name my_app_${{ runner.os }} --copy-metadata streamlit --collect-data streamlit --hidden-import streamlit.runtime.scriptrunner.magic_funcs --add-data "app_Doping.py:." run_app.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
