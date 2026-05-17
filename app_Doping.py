@@ -13,7 +13,6 @@ import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
 
-# NEW: Custom markdown title to allow inline HTML styling for the version date
 st.markdown("# UHV-bonded Heterostructure Physics Dashboard <span style='font-size: 20px; font-weight: normal; color: #888888;'>v. May 16, 2026</span>", unsafe_allow_html=True)
 st.markdown("Explore the topology, geometry, scattering, local doping level and many-body interactions of 2D UHV-bonded heterostructures.")
 
@@ -570,6 +569,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         if show_br_dom:
             legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
         
+        if L1 is not None and L2 is not None:
+            legend_elements.append(mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=2.0, label='Moiré Supercell\n' + r'($\mathbf{L}_{M1}, \mathbf{L}_{M2}$)'))
+
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
     lbl1_short = 'SrTiO₃' if 'SrTiO₃' in label1 else ('FeSe' if 'FeSe' in label1 else ('Bi₂Se₃' if 'Bi₂Se₃' in label1 else 'Graphene'))
