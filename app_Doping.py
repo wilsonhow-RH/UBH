@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+import matplotlib.colors mcolors
 from matplotlib.colors import LogNorm, Normalize
 import matplotlib.cm as cm
 import matplotlib.lines as mlines
@@ -143,13 +143,13 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
-# --- KINEMATIC STRAIN HELPER (DEBUGGED & OPTIMIZED FOR BLOB BROADENING) ---
+# --- KINEMATIC STRAIN HELPER (DISORDER COHERENCE BALANCED) ---
 def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den):
     N_fft = 512
     L_fft = 400.0
     tree = cKDTree(sub_full)
     
-    # 1. Real-Space Strain Field (Fixed array mismatch with explicit newaxis broadcasting)
+    # 1. Real-Space Strain Field (Fixed broadcasting dimension error)
     dist_vis, idx_vis = tree.query(vis_top)
     vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.45))**2)[:, np.newaxis]
     
@@ -160,19 +160,25 @@ def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_f
     T_total = ndimage.gaussian_filter(Hb.T, sigma=1) * ndimage.gaussian_filter(Ht.T, sigma=1)
     T_total = T_total / (np.max(T_total) + 1e-10) * 16.0 
     
-    # 3. Isotropic Circular Spot Broadening Model for LEED Pattern
+    # 3. Decoupled Spot Broadening Engine for Clean Circular Blobs
     fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
     fft_top = top_base_full[fft_mask].dot(R.T)
     dist_fft, idx_fft = tree.query(fft_top)
     fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.45))**2)[:, np.newaxis]
     
+    # Inject short-range structural domain decoherence to scrub directional interference streaks
+    if strain_coupling > 0:
+        rng = np.random.default_rng(42)
+        fft_top += rng.normal(0, strain_coupling * 0.28, size=fft_top.shape)
+    
     fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
     Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     Htf, _, _ = np.histogram2d(fft_top[:,0], fft_top[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     
-    # Isotropic filtering generates radially symmetric circular blobs rather than azimuthal streaks
-    blur_radius = 0.6 + strain_coupling * 1.8
-    T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=blur_radius) 
+    # ASYMMETRIC FILTERING: Substrate peaks stay sharp (0.5), overlayer peaks blur into clean circular blobs
+    sub_blur = 0.5
+    top_blur = 0.5 + strain_coupling * 4.5
+    T_fft = ndimage.gaussian_filter(Hbf.T, sigma=sub_blur) + ndimage.gaussian_filter(Htf.T, sigma=top_blur) 
     
     return vis_top, T_total, T_fft
 
@@ -254,7 +260,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
         label1, label2 = r"Layer 1 (Bi$_2$Se$_3$)", r"Layer 2 (MoS$_2$)"
-        V_sub, invV_sub = BZ1_pts, BZ2_pts = V_bise, invV_bise
+        V_sub, invV_sub = V_bise, invV_bise  # Fixed index collision typo
         
         mask_sub = (np.abs(pts_bise_base[:, 0]) < current_fov) & (np.abs(pts_bise_base[:, 1]) < current_fov)
         vis_base = pts_bise_base[mask_sub]
