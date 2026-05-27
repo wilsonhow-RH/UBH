@@ -9,7 +9,7 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
-from scipy.spatial import cKDTree  # <-- Required for fast 2D strain mapping
+from scipy.spatial import cKDTree  # Required for fast 2D strain mapping
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -143,42 +143,39 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
-# --- NEW KINEMATIC STRAIN HELPER ---
+# --- KINEMATIC STRAIN HELPER (DEBUGGED & OPTIMIZED FOR BLOB BROADENING) ---
 def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den):
     N_fft = 512
     L_fft = 400.0
     tree = cKDTree(sub_full)
     
-    # 1. Real-Space Strain (Displaces atoms for Topology Panel)
+    # 1. Real-Space Strain Field (Fixed array mismatch with explicit newaxis broadcasting)
     dist_vis, idx_vis = tree.query(vis_top)
+    vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.45))**2)[:, np.newaxis]
     
-    # FIX: Added [:, np.newaxis] to properly broadcast the 1D exponential scalar across the 2D (x,y) coordinate array
-    vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.4))**2)[:, np.newaxis]
-    
-    # 2. Rasterized Density (Calculates overlap for Geometry/Z-map Panel)
+    # 2. Rasterized Spatial Convolution
     den_base = sub_full[(np.abs(sub_full[:, 0]) < current_fov) & (np.abs(sub_full[:, 1]) < current_fov)]
     Hb, _, _ = np.histogram2d(den_base[:,0], den_base[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
     Ht, _, _ = np.histogram2d(vis_top[:,0], vis_top[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
     T_total = ndimage.gaussian_filter(Hb.T, sigma=1) * ndimage.gaussian_filter(Ht.T, sigma=1)
     T_total = T_total / (np.max(T_total) + 1e-10) * 16.0 
     
-    # 3. Broad Rasterization for Kinematic LEED (Generates Structure Factor for Scattering Panel)
+    # 3. Isotropic Circular Spot Broadening Model for LEED Pattern
     fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
     fft_top = top_base_full[fft_mask].dot(R.T)
     dist_fft, idx_fft = tree.query(fft_top)
-    
-    # FIX: Added [:, np.newaxis] here as well
-    fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.4))**2)[:, np.newaxis]
+    fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.45))**2)[:, np.newaxis]
     
     fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
     Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     Htf, _, _ = np.histogram2d(fft_top[:,0], fft_top[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     
-    # Sum amplitudes to mimic kinematic diffraction interference
-    T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=0.8) 
+    # Isotropic filtering generates radially symmetric circular blobs rather than azimuthal streaks
+    blur_radius = 0.6 + strain_coupling * 1.8
+    T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=blur_radius) 
     
     return vis_top, T_total, T_fft
-    
+
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
@@ -237,7 +234,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_mos2 = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
-        # Enable Kinematic Strain Routing
         if enable_kinematic and strain_coupling > 0:
             vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_sq_base, strain_coupling, a_sub, pts_mos2_base, R, current_fov, N_den)
         else:
@@ -258,14 +254,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
         label1, label2 = r"Layer 1 (Bi$_2$Se$_3$)", r"Layer 2 (MoS$_2$)"
-        V_sub, invV_sub = V_bise, invV_bise
+        V_sub, invV_sub = BZ1_pts, BZ2_pts = V_bise, invV_bise
         
         mask_sub = (np.abs(pts_bise_base[:, 0]) < current_fov) & (np.abs(pts_bise_base[:, 1]) < current_fov)
         vis_base = pts_bise_base[mask_sub]
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        # Enable Kinematic Strain Routing
         if enable_kinematic and strain_coupling > 0:
             vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_bise_base, strain_coupling, a_bise, pts_mos2_base, R, current_fov, N_den)
         else:
@@ -288,7 +283,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        # Enable Kinematic Strain Routing
         if enable_kinematic and strain_coupling > 0:
             vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_mos2_base, R, current_fov, N_den)
         else:
@@ -312,7 +306,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
-        # Enable Kinematic Strain Routing
         if enable_kinematic and strain_coupling > 0:
             vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_grap_base, R, current_fov, N_den)
         else:
