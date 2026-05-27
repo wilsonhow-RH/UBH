@@ -151,8 +151,9 @@ def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_f
     
     # 1. Real-Space Strain (Displaces atoms for Topology Panel)
     dist_vis, idx_vis = tree.query(vis_top)
-    # Pull atoms towards nearest substrate well. Gaussian envelope limits long-range unphysical tearing.
-    vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.4))**2)
+    
+    # FIX: Added [:, np.newaxis] to properly broadcast the 1D exponential scalar across the 2D (x,y) coordinate array
+    vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.4))**2)[:, np.newaxis]
     
     # 2. Rasterized Density (Calculates overlap for Geometry/Z-map Panel)
     den_base = sub_full[(np.abs(sub_full[:, 0]) < current_fov) & (np.abs(sub_full[:, 1]) < current_fov)]
@@ -165,7 +166,9 @@ def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_f
     fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
     fft_top = top_base_full[fft_mask].dot(R.T)
     dist_fft, idx_fft = tree.query(fft_top)
-    fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.4))**2)
+    
+    # FIX: Added [:, np.newaxis] here as well
+    fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.4))**2)[:, np.newaxis]
     
     fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
     Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
@@ -175,7 +178,7 @@ def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_f
     T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=0.8) 
     
     return vis_top, T_total, T_fft
-
+    
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
