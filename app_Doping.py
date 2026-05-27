@@ -142,77 +142,60 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
-# --- STRICT PHYSICAL KINEMATIC STRAIN HELPER ---
-def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den):
-    N_fft = 512
-    L_fft = 400.0
-    
-    # 1. Spatially Correlated Gaussian Displacement Field
-    # This physically models the nanoscale mosaicity and domain rippling 
-    # of a strongly pinned incommensurate layer.
-    def apply_correlated_strain(pts, bounding_radius):
-        if strain_coupling == 0:
-            return pts
-            
-        corr_length = 40.0 # ~4 nm coherent mosaic domain size
-        grid_res = 5.0 # Resolution of the underlying noise grid
-        N_grid = int((bounding_radius * 2 + 100) / grid_res)
+# --- CONTINUOUS ANALYTICAL DISTORTION HELPER ---
+def get_displacement_field(X, Y, a_sub, sys_type, strain_coupling):
+    """
+    Computes a continuous spatial displacement field U(x,y).
+    This strictly avoids any discrete binning or spatial aliasing.
+    """
+    if strain_coupling == 0:
+        return np.zeros_like(X), np.zeros_like(Y)
         
-        # Stable RNG for UI consistency
-        rng = np.random.default_rng(42)
-        noise_x = rng.normal(0, 1, (N_grid, N_grid))
-        noise_y = rng.normal(0, 1, (N_grid, N_grid))
+    # 1. Periodic Kinematic Pinning (Frenkel-Kontorova Model)
+    if sys_type == 'Square':
+        qx, qy = 2 * np.pi / a_sub, 2 * np.pi / a_sub
+        amp = (a_sub / (2 * np.pi)) * 0.2 * strain_coupling
+        U_fk_x = -np.sin(qx * X) * amp
+        U_fk_y = -np.sin(qy * Y) * amp
+    else:
+        q = 4 * np.pi / (np.sqrt(3) * a_sub)
+        g1x, g1y = 0, q
+        g2x, g2y = q * np.sqrt(3)/2, -q * 0.5
+        g3x, g3y = -q * np.sqrt(3)/2, -q * 0.5
         
-        # Low-pass filter the noise to ensure structural continuity
-        sigma = corr_length / grid_res
-        u_x_smooth = ndimage.gaussian_filter(noise_x, sigma)
-        u_y_smooth = ndimage.gaussian_filter(noise_y, sigma)
+        p1 = np.sin(X*g1x + Y*g1y)
+        p2 = np.sin(X*g2x + Y*g2y)
+        p3 = np.sin(X*g3x + Y*g3y)
         
-        # Normalize the displacement field globally
-        rms = np.sqrt(np.mean(u_x_smooth**2 + u_y_smooth**2) + 1e-10)
-        u_x_smooth /= rms
-        u_y_smooth /= rms
-        
-        # Maximum displacement scales directly with the user coupling parameter.
-        # Amplitude is kept physically small (~0.5 A) to preserve local atomic bonds
-        # while scrambling the macroscopic Moire phase.
-        amplitude = strain_coupling * 0.5 
-        
-        # Map the continuous displacement field onto the exact atomic coordinates
-        idx_x = np.clip(((pts[:, 0] + bounding_radius + 50) / grid_res).astype(int), 0, N_grid-1)
-        idx_y = np.clip(((pts[:, 1] + bounding_radius + 50) / grid_res).astype(int), 0, N_grid-1)
-        
-        dx = u_x_smooth[idx_x, idx_y] * amplitude
-        dy = u_y_smooth[idx_x, idx_y] * amplitude
-        
-        return np.column_stack([pts[:, 0] + dx, pts[:, 1] + dy])
+        amp = 0.3 * strain_coupling / (q**2)
+        U_fk_x = -(g1x*p1 + g2x*p2 + g3x*p3) * amp
+        U_fk_y = -(g1y*p1 + g2y*p2 + g3y*p3) * amp
 
-    # --- Apply to Topology View ---
-    vis_top = apply_correlated_strain(vis_top, current_fov * 1.5)
+    # 2. Continuous Nanoscale Mosaicity (Phase Decoherence)
+    # The amplitude of this random structural noise is strictly constrained to be much 
+    # smaller (~0.02 A) than the physical kinematic displacement (~0.15 A) as requested.
+    rng = np.random.default_rng(42)
+    L_corr = 60.0 # ~6 nm coherent domain scale
+    k_mag = 2 * np.pi / L_corr
     
-    # --- Rasterize for Geometry Panel ---
-    den_base = sub_full[(np.abs(sub_full[:, 0]) < current_fov) & (np.abs(sub_full[:, 1]) < current_fov)]
-    Hb, _, _ = np.histogram2d(den_base[:,0], den_base[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
-    Ht, _, _ = np.histogram2d(vis_top[:,0], vis_top[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
-    T_total = ndimage.gaussian_filter(Hb.T, sigma=1) * ndimage.gaussian_filter(Ht.T, sigma=1)
-    T_total = T_total / (np.max(T_total) + 1e-10) * 16.0 
+    U_n_x = np.zeros_like(X)
+    U_n_y = np.zeros_like(Y)
     
-    # --- Apply to FFT View (Scattering) ---
-    fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
-    fft_top = top_base_full[fft_mask].dot(R.T)
-    
-    # Phase scrambling the overlayer via the same continuous displacement field
-    fft_top = apply_correlated_strain(fft_top, L_fft/2)
-    
-    fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
-    Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
-    Htf, _, _ = np.histogram2d(fft_top[:,0], fft_top[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
-    
-    # Strictly instrumental anti-aliasing (0.6).
-    # All circular broadening natively emerges from the non-periodic spatial noise.
-    T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=0.6) 
-    
-    return vis_top, T_total, T_fft
+    for _ in range(5):
+        ang = rng.uniform(0, 2*np.pi)
+        kx, ky = k_mag * np.cos(ang), k_mag * np.sin(ang)
+        phase = rng.uniform(0, 2*np.pi)
+        dir_ang = rng.uniform(0, 2*np.pi)
+        
+        wave = np.sin(X*kx + Y*ky + phase)
+        U_n_x += wave * np.cos(dir_ang)
+        U_n_y += wave * np.sin(dir_ang)
+        
+    noise_amp = strain_coupling * 0.02 
+    U_n_x = (U_n_x / 5.0) * noise_amp
+    U_n_y = (U_n_y / 5.0) * noise_amp
+
+    return U_fk_x + U_n_x, U_fk_y + U_n_y
 
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
@@ -254,7 +237,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
     # ------------------------------------------
-    # DATA ROUTING BY SYSTEM
+    # DATA ROUTING BY SYSTEM (CONTINUOUS DISTORTION APPLIED HERE)
     # ------------------------------------------
     layer2_Cq = 0.01  
     
@@ -273,7 +256,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_sq_base, strain_coupling, a_sub, pts_mos2_base, R, current_fov, N_den)
+            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_sub, 'Square', strain_coupling)
+            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_sub, 'Square', strain_coupling)
+            
+            T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            
+            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_sub, 'Square', strain_coupling)
+            vis_top[:,0] += Ux_pts
+            vis_top[:,1] += Uy_pts
         else:
             T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -285,7 +276,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         dist_br = np.minimum(np.sqrt((vis_top[:, 0] - cx)**2 + (vis_top[:, 1] - ny)**2), np.sqrt((vis_top[:, 0] - nx)**2 + (vis_top[:, 1] - cy)**2))
         
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/decay_L)**2), np.exp(-(dist_br/(decay_L*0.8))**2)
-        
         G1_pts, G2_pts = get_square_G(a_sub), get_hex_G(a_mos2, theta_deg)
         BZ1_pts, BZ2_pts = get_square_bz(a_sub, 0.0), get_hex_bz(a_mos2, theta_deg)
 
@@ -300,7 +290,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_bise_base, strain_coupling, a_bise, pts_mos2_base, R, current_fov, N_den)
+            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_bise, 'Hex', strain_coupling)
+            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_bise, 'Hex', strain_coupling)
+            
+            T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            
+            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_bise, 'Hex', strain_coupling)
+            vis_top[:,0] += Ux_pts
+            vis_top[:,1] += Uy_pts
         else:
             T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -322,7 +320,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_mos2_base, R, current_fov, N_den)
+            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_g, 'Hex', strain_coupling)
+            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_g, 'Hex', strain_coupling)
+            
+            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            
+            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_g, 'Hex', strain_coupling)
+            vis_top[:,0] += Ux_pts
+            vis_top[:,1] += Uy_pts
         else:
             T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -345,7 +351,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_grap_base, R, current_fov, N_den)
+            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_g, 'Hex', strain_coupling)
+            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_g, 'Hex', strain_coupling)
+            
+            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            
+            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_g, 'Hex', strain_coupling)
+            vis_top[:,0] += Ux_pts
+            vis_top[:,1] += Uy_pts
         else:
             T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
@@ -620,6 +634,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
+    # Apply experimental instrument response function to create final smooth blobs.
+    # In real UHV LEED, the electron beam has a finite transfer width (coherence length ~ 100-200 A)
+    # which inherently averages over microscopic domains and naturally broadens peaks into circular blobs.
+    if enable_kinematic and strain_coupling > 0:
+        # Kinematic disorder introduces slight structural broadening on top of the instrument profile
+        intensity = ndimage.gaussian_filter(intensity, sigma=1.2 + strain_coupling*1.5)
+    else:
+        # Intrinsic LEED instrument broadening
+        intensity = ndimage.gaussian_filter(intensity, sigma=1.0)
+    
     im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-7, vmax=np.max(intensity)))
     
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
@@ -704,7 +728,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     st.markdown("**1. Kinematic Strain & Simulated LEED**")
     kcol1, kcol2 = st.columns(2)
     with kcol1:
-        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a spatially correlated displacement field to model nanoscale mosaicity without shredding the lattice.")
+        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a continuous displacement field to model local nanoscale mosaicity without spatial aliasing.")
     with kcol2:
         strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Severe incommensurate atomic distortion.")
         
