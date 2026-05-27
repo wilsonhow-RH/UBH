@@ -9,6 +9,7 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
+from scipy.spatial import cKDTree  # <-- Required for fast 2D strain mapping
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -142,10 +143,43 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
+# --- NEW KINEMATIC STRAIN HELPER ---
+def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den):
+    N_fft = 512
+    L_fft = 400.0
+    tree = cKDTree(sub_full)
+    
+    # 1. Real-Space Strain (Displaces atoms for Topology Panel)
+    dist_vis, idx_vis = tree.query(vis_top)
+    # Pull atoms towards nearest substrate well. Gaussian envelope limits long-range unphysical tearing.
+    vis_top += strain_coupling * (sub_full[idx_vis] - vis_top) * np.exp(-(dist_vis / (a_sub * 0.4))**2)
+    
+    # 2. Rasterized Density (Calculates overlap for Geometry/Z-map Panel)
+    den_base = sub_full[(np.abs(sub_full[:, 0]) < current_fov) & (np.abs(sub_full[:, 1]) < current_fov)]
+    Hb, _, _ = np.histogram2d(den_base[:,0], den_base[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
+    Ht, _, _ = np.histogram2d(vis_top[:,0], vis_top[:,1], bins=N_den, range=[[-current_fov, current_fov], [-current_fov, current_fov]])
+    T_total = ndimage.gaussian_filter(Hb.T, sigma=1) * ndimage.gaussian_filter(Ht.T, sigma=1)
+    T_total = T_total / (np.max(T_total) + 1e-10) * 16.0 
+    
+    # 3. Broad Rasterization for Kinematic LEED (Generates Structure Factor for Scattering Panel)
+    fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
+    fft_top = top_base_full[fft_mask].dot(R.T)
+    dist_fft, idx_fft = tree.query(fft_top)
+    fft_top += strain_coupling * (sub_full[idx_fft] - fft_top) * np.exp(-(dist_fft / (a_sub * 0.4))**2)
+    
+    fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
+    Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
+    Htf, _, _ = np.histogram2d(fft_top[:,0], fft_top[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
+    
+    # Sum amplitudes to mimic kinematic diffraction interference
+    T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=0.8) 
+    
+    return vis_top, T_total, T_fft
+
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False):
+def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=False):
     pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
 
     if fig is None:
@@ -200,6 +234,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_mos2 = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
+        # Enable Kinematic Strain Routing
+        if enable_kinematic and strain_coupling > 0:
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_sq_base, strain_coupling, a_sub, pts_mos2_base, R, current_fov, N_den)
+        else:
+            T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+            T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        
         nx, ny = np.round(vis_top[:, 0] / a_sub) * a_sub, np.round(vis_top[:, 1] / a_sub) * a_sub
         dist_co = np.sqrt((vis_top[:, 0] - nx)**2 + (vis_top[:, 1] - ny)**2)
         cx, cy = np.floor(vis_top[:, 0] / a_sub) * a_sub + a_sub/2, np.floor(vis_top[:, 1] / a_sub) * a_sub + a_sub/2
@@ -208,8 +249,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/decay_L)**2), np.exp(-(dist_br/(decay_L*0.8))**2)
         
-        T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_square_G(a_sub), get_hex_G(a_mos2, theta_deg)
         BZ1_pts, BZ2_pts = get_square_bz(a_sub, 0.0), get_hex_bz(a_mos2, theta_deg)
 
@@ -223,11 +262,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
+        # Enable Kinematic Strain Routing
+        if enable_kinematic and strain_coupling > 0:
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_bise_base, strain_coupling, a_bise, pts_mos2_base, R, current_fov, N_den)
+        else:
+            T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+            T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
-        T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_bise, 0.0), get_hex_G(a_mos2, theta_deg)
         BZ1_pts, BZ2_pts = get_hex_bz(a_bise, 0.0), get_hex_bz(a_mos2, theta_deg)
 
@@ -241,11 +285,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
+        # Enable Kinematic Strain Routing
+        if enable_kinematic and strain_coupling > 0:
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_mos2_base, R, current_fov, N_den)
+        else:
+            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
-        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_mos2, theta_deg)
         BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_mos2, theta_deg)
 
@@ -260,11 +309,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
+        # Enable Kinematic Strain Routing
+        if enable_kinematic and strain_coupling > 0:
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_grap_base, R, current_fov, N_den)
+        else:
+            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
+            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
+        
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
 
-        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
         BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_g, theta_deg)
 
@@ -613,7 +667,15 @@ with col3:
 # --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
     
-    st.markdown("**1. Interfacial Mechanics & Doping Model**")
+    st.markdown("**1. Kinematic Strain & Simulated LEED**")
+    kcol1, kcol2 = st.columns(2)
+    with kcol1:
+        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a non-linear displacement field to force the top lattice into local substrate registry.")
+    with kcol2:
+        strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Severe incommensurate atomic distortion.")
+        
+    st.markdown("---")
+    st.markdown("**2. Interfacial Mechanics & Doping Model**")
     
     relax_mode = st.selectbox("Mechanical Relaxation Model:", [
         "Rigid Lattices (No Relaxation)", 
@@ -651,7 +713,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
             k_vdw = st.slider("vdW Spring Stiffness ($k_{vdW}$)", 0.1, 5.0, 1.0, 0.1)
 
     st.markdown("---")
-    st.markdown("**2. Local Electron-Phonon Coupling Model**")
+    st.markdown("**3. Local Electron-Phonon Coupling Model**")
     ecol1, ecol2, ecol3, ecol4 = st.columns(4)
     with ecol1:
         eph_g0 = st.number_input("Base Coupling at min gap (meV)", value=80.0, step=5.0)
@@ -663,7 +725,7 @@ dashboard_placeholder = st.empty()
 
 with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
     with dashboard_placeholder.container():
-        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=False)
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=False)
         st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -684,7 +746,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     for ang in range(max_t_int + 1):
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
-        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, is_video_frame=True)
+        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
