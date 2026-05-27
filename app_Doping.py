@@ -143,63 +143,52 @@ def get_hex_bz(a, theta_deg=0.0):
     return base_bz.dot(R.T)
 
 # --- STRICT PHYSICAL KINEMATIC STRAIN HELPER ---
-def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den, sys_type):
+def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_full, R, current_fov, N_den):
     N_fft = 512
     L_fft = 400.0
     
-    # 1. Physical Nanoscale Mosaicity (The true source of circular LEED blobs)
-    # UHV-bonding a highly incommensurate layer shatters long-range Moiré coherence,
-    # forcing the 2D layer to buckle into nanoscale mosaic domains. 
-    # We model this physically as a spatially correlated, continuous local twist and dilation field.
-    def apply_mosaicity(pts):
-        L_corr = 35.0 # ~3.5 nm domain correlation length
-        rng = np.random.default_rng(123)
-        d_theta = np.zeros(len(pts))
-        d_scale = np.zeros(len(pts))
+    # 1. Spatially Correlated Gaussian Displacement Field
+    # This physically models the nanoscale mosaicity and domain rippling 
+    # of a strongly pinned incommensurate layer.
+    def apply_correlated_strain(pts, bounding_radius):
+        if strain_coupling == 0:
+            return pts
+            
+        corr_length = 40.0 # ~4 nm coherent mosaic domain size
+        grid_res = 5.0 # Resolution of the underlying noise grid
+        N_grid = int((bounding_radius * 2 + 100) / grid_res)
         
-        k_mag = 2 * np.pi / L_corr
-        for _ in range(6):
-            angle = rng.uniform(0, 2*np.pi)
-            kx, ky = k_mag * np.cos(angle), k_mag * np.sin(angle)
-            phase1, phase2 = rng.uniform(0, 2*np.pi, 2)
-            d_theta += np.sin(pts[:, 0]*kx + pts[:, 1]*ky + phase1)
-            d_scale += np.sin(pts[:, 0]*kx + pts[:, 1]*ky + phase2)
+        # Stable RNG for UI consistency
+        rng = np.random.default_rng(42)
+        noise_x = rng.normal(0, 1, (N_grid, N_grid))
+        noise_y = rng.normal(0, 1, (N_grid, N_grid))
         
-        # Max local twist ~ 2.5 degrees, Max local strain ~ 1.5%
-        # Relative displacement between neighbor atoms is tiny (< 0.05 A), fulfilling the physics constraint.
-        d_theta = (d_theta / 6.0) * (strain_coupling * 0.045)
-        d_scale = (d_scale / 6.0) * (strain_coupling * 0.015)
+        # Low-pass filter the noise to ensure structural continuity
+        sigma = corr_length / grid_res
+        u_x_smooth = ndimage.gaussian_filter(noise_x, sigma)
+        u_y_smooth = ndimage.gaussian_filter(noise_y, sigma)
         
-        cos_t, sin_t = np.cos(d_theta), np.sin(d_theta)
-        scale = 1.0 + d_scale
+        # Normalize the displacement field globally
+        rms = np.sqrt(np.mean(u_x_smooth**2 + u_y_smooth**2) + 1e-10)
+        u_x_smooth /= rms
+        u_y_smooth /= rms
         
-        x_new = scale * (pts[:, 0]*cos_t - pts[:, 1]*sin_t)
-        y_new = scale * (pts[:, 0]*sin_t + pts[:, 1]*cos_t)
-        return np.column_stack([x_new, y_new])
-
-    # 2. Local Substrate Pinning (Frenkel-Kontorova Kinematic Strain)
-    def get_fk_pinning(pts):
-        u_pin = np.zeros_like(pts)
-        if sys_type == 'Square':
-            q = 2 * np.pi / a_sub
-            u_pin[:, 0] = -np.sin(q * pts[:, 0]) / q
-            u_pin[:, 1] = -np.sin(q * pts[:, 1]) / q
-        else: 
-            q = 4 * np.pi / (np.sqrt(3) * a_sub)
-            g1 = np.array([0, q])
-            g2 = np.array([q * np.sqrt(3)/2, -q * 0.5])
-            g3 = np.array([-q * np.sqrt(3)/2, -q * 0.5])
-            p1 = np.sin(pts.dot(g1))
-            p2 = np.sin(pts.dot(g2))
-            p3 = np.sin(pts.dot(g3))
-            u_pin[:, 0] = -(g1[0]*p1 + g2[0]*p2 + g3[0]*p3) / (q**2)
-            u_pin[:, 1] = -(g1[1]*p1 + g2[1]*p2 + g3[1]*p3) / (q**2)
-        return u_pin * (strain_coupling * 1.5)
+        # Maximum displacement scales directly with the user coupling parameter.
+        # Amplitude is kept physically small (~0.5 A) to preserve local atomic bonds
+        # while scrambling the macroscopic Moire phase.
+        amplitude = strain_coupling * 0.5 
+        
+        # Map the continuous displacement field onto the exact atomic coordinates
+        idx_x = np.clip(((pts[:, 0] + bounding_radius + 50) / grid_res).astype(int), 0, N_grid-1)
+        idx_y = np.clip(((pts[:, 1] + bounding_radius + 50) / grid_res).astype(int), 0, N_grid-1)
+        
+        dx = u_x_smooth[idx_x, idx_y] * amplitude
+        dy = u_y_smooth[idx_x, idx_y] * amplitude
+        
+        return np.column_stack([pts[:, 0] + dx, pts[:, 1] + dy])
 
     # --- Apply to Topology View ---
-    if strain_coupling > 0:
-        vis_top = apply_mosaicity(vis_top)
-    vis_top += get_fk_pinning(vis_top)
+    vis_top = apply_correlated_strain(vis_top, current_fov * 1.5)
     
     # --- Rasterize for Geometry Panel ---
     den_base = sub_full[(np.abs(sub_full[:, 0]) < current_fov) & (np.abs(sub_full[:, 1]) < current_fov)]
@@ -212,16 +201,15 @@ def apply_kinematic_strain(vis_top, sub_full, strain_coupling, a_sub, top_base_f
     fft_mask = (np.abs(top_base_full[:, 0]) < L_fft/2) & (np.abs(top_base_full[:, 1]) < L_fft/2)
     fft_top = top_base_full[fft_mask].dot(R.T)
     
-    if strain_coupling > 0:
-        fft_top = apply_mosaicity(fft_top)
-    fft_top += get_fk_pinning(fft_top)
+    # Phase scrambling the overlayer via the same continuous displacement field
+    fft_top = apply_correlated_strain(fft_top, L_fft/2)
     
     fft_base = sub_full[(np.abs(sub_full[:, 0]) < L_fft/2) & (np.abs(sub_full[:, 1]) < L_fft/2)]
     Hbf, _, _ = np.histogram2d(fft_base[:,0], fft_base[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     Htf, _, _ = np.histogram2d(fft_top[:,0], fft_top[:,1], bins=N_fft, range=[[-L_fft/2, L_fft/2], [-L_fft/2, L_fft/2]])
     
-    # STRICTLY instrumental resolution anti-aliasing.
-    # All broad circular blobs now emerge purely from the real-space mosaicity field.
+    # Strictly instrumental anti-aliasing (0.6).
+    # All circular broadening natively emerges from the non-periodic spatial noise.
     T_fft = ndimage.gaussian_filter(Hbf.T + Htf.T, sigma=0.6) 
     
     return vis_top, T_total, T_fft
@@ -285,7 +273,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_sq_base, strain_coupling, a_sub, pts_mos2_base, R, current_fov, N_den, 'Square')
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_sq_base, strain_coupling, a_sub, pts_mos2_base, R, current_fov, N_den)
         else:
             T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -312,7 +300,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_bise_base, strain_coupling, a_bise, pts_mos2_base, R, current_fov, N_den, 'Hex')
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_bise_base, strain_coupling, a_bise, pts_mos2_base, R, current_fov, N_den)
         else:
             T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -334,7 +322,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_mos2_base, R, current_fov, N_den, 'Hex')
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_mos2_base, R, current_fov, N_den)
         else:
             T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -357,7 +345,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_grap_base, R, current_fov, N_den, 'Hex')
+            vis_top, T_total, T_fft = apply_kinematic_strain(vis_top, pts_grap_base, strain_coupling, a_g, pts_grap_base, R, current_fov, N_den)
         else:
             T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
             T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
@@ -716,7 +704,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     st.markdown("**1. Kinematic Strain & Simulated LEED**")
     kcol1, kcol2 = st.columns(2)
     with kcol1:
-        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a continuous displacement field to force the top lattice into local substrate registry.")
+        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a spatially correlated displacement field to model nanoscale mosaicity without shredding the lattice.")
     with kcol2:
         strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Severe incommensurate atomic distortion.")
         
