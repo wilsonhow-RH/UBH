@@ -142,64 +142,6 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
-# --- PHYSICAL KINEMATIC STRAIN HELPER ---
-def get_displacement_field(X, Y, a_sub, sys_type, strain_coupling):
-    if strain_coupling == 0:
-        return np.zeros_like(X), np.zeros_like(Y)
-        
-    # 1. Periodic Kinematic Pinning (Frenkel-Kontorova)
-    # Amplitudes are scaled to provide a physically noticeable moire pinning effect
-    if sys_type == 'Square':
-        qx, qy = 2 * np.pi / a_sub, 2 * np.pi / a_sub
-        amp = 0.25 * strain_coupling 
-        U_fk_x = -np.sin(qx * X) * amp
-        U_fk_y = -np.sin(qy * Y) * amp
-    else:
-        q = 4 * np.pi / (np.sqrt(3) * a_sub)
-        g1x, g1y = 0, q
-        g2x, g2y = q * np.sqrt(3)/2, -q * 0.5
-        g3x, g3y = -q * np.sqrt(3)/2, -q * 0.5
-        
-        p1 = np.sin(X*g1x + Y*g1y)
-        p2 = np.sin(X*g2x + Y*g2y)
-        p3 = np.sin(X*g3x + Y*g3y)
-        
-        amp = 0.15 * strain_coupling 
-        U_fk_x = -(g1x*p1 + g2x*p2 + g3x*p3) * amp
-        U_fk_y = -(g1y*p1 + g2y*p2 + g3y*p3) * amp
-
-    # 2. Meso-scale Orientational Mosaicity (Divergence-Free Field)
-    rng = np.random.default_rng(123)
-    L_corr = 60.0 
-    k_mag = 2 * np.pi / L_corr
-    
-    U_n_x = np.zeros_like(X)
-    U_n_y = np.zeros_like(Y)
-    
-    for _ in range(4):
-        ang = rng.uniform(0, 2*np.pi)
-        kx, ky = k_mag * np.cos(ang), k_mag * np.sin(ang)
-        phase = rng.uniform(0, 2*np.pi)
-        
-        wave = np.sin(X*kx + Y*ky + phase)
-        # Using a curl field guarantees zero divergence (area preservation). 
-        # This applies pure local rotation (mosaicity) without local bond stretching,
-        # preventing the "shredding" artifact entirely.
-        U_n_x += -ky * wave
-        U_n_y +=  kx * wave
-        
-    norm_max = np.max(np.sqrt(U_n_x**2 + U_n_y**2)) + 1e-10
-    
-    # The accumulated macroscopic phase shift amplitude.
-    # While the accumulated shift reaches ~0.9 A across the 60 A domain (needed to physically
-    # broaden the FFT spot into a blob), the local atom-to-atom random strain is strictly < 0.04 A, 
-    # fulfilling the physical constraint of being much smaller than the FK pinning displacement.
-    mosaic_amp = 0.9 * strain_coupling 
-    U_n_x = (U_n_x / norm_max) * mosaic_amp
-    U_n_y = (U_n_y / norm_max) * mosaic_amp
-
-    return U_fk_x + U_n_x, U_fk_y + U_n_y
-
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
@@ -240,7 +182,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
     # ------------------------------------------
-    # DATA ROUTING BY SYSTEM
+    # DATA ROUTING BY SYSTEM (QUASICRYSTAL MODEL)
     # ------------------------------------------
     layer2_Cq = 0.01  
     
@@ -259,15 +201,35 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_sub, 'Square', strain_coupling)
-            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_sub, 'Square', strain_coupling)
+            # 1. Structural Modulations (Slight physical rippling)
+            q_s = 2 * np.pi / a_sub
+            amp = 0.05 * strain_coupling
+            Ux_den, Uy_den = -np.sin(q_s * X_den) * amp, -np.sin(q_s * Y_den) * amp
+            Ux_fft, Uy_fft = -np.sin(q_s * X_fft) * amp, -np.sin(q_s * Y_fft) * amp
             
-            T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            # 2. DODECAGONAL QUASICRYSTAL SUPERPOSITION
+            # The primary C6 state
+            T_base_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_base_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
             
-            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_sub, 'Square', strain_coupling)
-            vis_top[:,0] += Ux_pts
-            vis_top[:,1] += Uy_pts
+            # The STO C4v symmetry enforces reflections across 0-deg and 45-deg axes
+            T_m0_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, -theta_deg)
+            T_m0_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, -theta_deg)
+            
+            T_m45_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, 90.0 - theta_deg)
+            T_m45_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, 90.0 - theta_deg)
+            
+            # Coherent superposition of states creating the true Dodecagonal state
+            weight = strain_coupling * 0.75
+            T_hex_den = T_base_den + weight * T_m0_den + weight * T_m45_den
+            T_hex_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
+            
+            T_total = get_square_density(a_sub, X_den, Y_den) * T_hex_den
+            T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_hex_fft
+            
+            # Gently ripple visual coordinates to match the FK pinning envelope
+            vis_top[:,0] -= np.sin(q_s * vis_top[:,0]) * amp
+            vis_top[:,1] -= np.sin(q_s * vis_top[:,1]) * amp
         else:
             T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -293,19 +255,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        if enable_kinematic and strain_coupling > 0:
-            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_bise, 'Hex', strain_coupling)
-            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_bise, 'Hex', strain_coupling)
-            
-            T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
-            
-            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_bise, 'Hex', strain_coupling)
-            vis_top[:,0] += Ux_pts
-            vis_top[:,1] += Uy_pts
-        else:
-            T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -323,19 +274,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        if enable_kinematic and strain_coupling > 0:
-            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_g, 'Hex', strain_coupling)
-            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_g, 'Hex', strain_coupling)
-            
-            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
-            
-            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_g, 'Hex', strain_coupling)
-            vis_top[:,0] += Ux_pts
-            vis_top[:,1] += Uy_pts
-        else:
-            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -353,20 +293,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_base = pts_grap_base[mask_sub]
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
-        
-        if enable_kinematic and strain_coupling > 0:
-            Ux_den, Uy_den = get_displacement_field(X_den, Y_den, a_g, 'Hex', strain_coupling)
-            Ux_fft, Uy_fft = get_displacement_field(X_fft, Y_fft, a_g, 'Hex', strain_coupling)
-            
-            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
-            
-            Ux_pts, Uy_pts = get_displacement_field(vis_top[:,0], vis_top[:,1], a_g, 'Hex', strain_coupling)
-            vis_top[:,0] += Ux_pts
-            vis_top[:,1] += Uy_pts
-        else:
-            T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
-            T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
+
+        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
+        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -634,16 +563,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 3: LEED FFT
     # ------------------------------------------
-    # ONLY a tiny blur to act as a discrete anti-aliasing filter for the histogram binning.
+    # Minimal anti-aliasing ONLY
     T_fft = ndimage.gaussian_filter(T_fft, sigma=0.5) 
     T_centered_windowed = (T_fft - np.mean(T_fft)) * window_2d
     
-    # NO ARTIFICIAL INTENSITY BLUR HERE. 
-    # Any peak broadening is strictly physical and stems entirely from the curl-field generated coordinates.
+    # Dodecagonal Quasi-Crystalline pattern emerges purely and analytically 
+    # from the coherent spatial superposition calculated in the routing block.
     intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
-    # vmin set to 1e-6 cleanly drops numerical background ringing, keeping the display pristine
     im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-6, vmax=np.max(intensity)))
     
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
@@ -651,6 +579,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
+    
+    if 'Hex-on-Square' in system_mode and enable_kinematic and strain_coupling > 0:
+        # Visually map the theoretically predicted mirrored spots forming the Dodecagonal state
+        G2_m0 = get_hex_G(a_mos2, -theta_deg)
+        G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
+        ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 0° Mirror')
+        ax3.scatter(G2_m45[:, 0], G2_m45[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 45° Mirror')
     
     if g1_A is not None and g2_A is not None:
         for i, (v1, v2) in enumerate([(g1_A, g2_A), (g1_B, g2_B)]):
@@ -728,9 +663,9 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     st.markdown("**1. Kinematic Strain & Simulated LEED**")
     kcol1, kcol2 = st.columns(2)
     with kcol1:
-        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Applies a divergence-free displacement field to model physical mosaicity without artificial FFT blurring.")
+        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Activates the Substrate-Driven Dodecagonal Quasicrystal phase.")
     with kcol2:
-        strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Strong incommensurate atomic distortion.")
+        strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Strong 12-fold Quasi-periodic resonance.")
         
     st.markdown("---")
     st.markdown("**2. Interfacial Mechanics & Doping Model**")
