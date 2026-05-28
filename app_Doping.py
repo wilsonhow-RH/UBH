@@ -142,6 +142,34 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
+# --- PHYSICAL QUASICRYSTAL PLD HELPER ---
+def get_quasicrystal_pld(X, Y, coupling):
+    """
+    Applies a structural 12-fold Periodic Lattice Distortion (PLD) 
+    to physically transform the domain boundaries in real space.
+    """
+    if coupling == 0:
+        return np.zeros_like(X), np.zeros_like(Y)
+        
+    q_pld = 2 * np.pi / 28.0 # Mesoscopic fractal scale (~ 2.8 nm)
+    angles = np.arange(0, np.pi, np.pi/6) # 6 unique axes = 12-fold symmetry
+    
+    Ux = np.zeros_like(X)
+    Uy = np.zeros_like(Y)
+    
+    for ang in angles:
+        qx = q_pld * np.cos(ang)
+        qy = q_pld * np.sin(ang)
+        wave = np.sin(X*qx + Y*qy)
+        
+        # Divergence-free curl field reorganizes straight domains into a 12-fold fractal tiling
+        Ux += -qy * wave
+        Uy +=  qx * wave
+        
+    norm_max = np.max(np.sqrt(Ux**2 + Uy**2)) + 1e-10
+    amp = coupling * 1.5 # Visibly shifts atoms to dynamically update Panel 1 domains
+    return (Ux / norm_max) * amp, (Uy / norm_max) * amp
+
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
@@ -182,7 +210,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
     # ------------------------------------------
-    # DATA ROUTING BY SYSTEM (QUASICRYSTAL MODEL)
+    # DATA ROUTING BY SYSTEM 
     # ------------------------------------------
     layer2_Cq = 0.01  
     
@@ -201,35 +229,31 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
         if enable_kinematic and strain_coupling > 0:
-            # 1. Structural Modulations (Slight physical rippling)
-            q_s = 2 * np.pi / a_sub
-            amp = 0.05 * strain_coupling
-            Ux_den, Uy_den = -np.sin(q_s * X_den) * amp, -np.sin(q_s * Y_den) * amp
-            Ux_fft, Uy_fft = -np.sin(q_s * X_fft) * amp, -np.sin(q_s * Y_fft) * amp
+            # 1. Structural Quasicrystalline PLD (Visually transforms Panel 1)
+            Ux_den, Uy_den = get_quasicrystal_pld(X_den, Y_den, strain_coupling)
+            Ux_fft, Uy_fft = get_quasicrystal_pld(X_fft, Y_fft, strain_coupling)
+            Ux_pts, Uy_pts = get_quasicrystal_pld(vis_top[:,0], vis_top[:,1], strain_coupling)
             
-            # 2. DODECAGONAL QUASICRYSTAL SUPERPOSITION
-            # The primary C6 state
+            vis_top[:,0] += Ux_pts
+            vis_top[:,1] += Uy_pts
+            
+            # 2. Electronic Quasicrystalline Superposition (Visually transforms Panel 2 & 3)
+            weight = strain_coupling * 1.0 # Amplified to clearly visualize the 12-fold CDW
+            
+            # Density mapping (Panel 2)
             T_base_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_base_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
-            
-            # The STO C4v symmetry enforces reflections across 0-deg and 45-deg axes
             T_m0_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, -theta_deg)
-            T_m0_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, -theta_deg)
-            
             T_m45_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, 90.0 - theta_deg)
-            T_m45_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, 90.0 - theta_deg)
-            
-            # Coherent superposition of states creating the true Dodecagonal state
-            weight = strain_coupling * 0.75
             T_hex_den = T_base_den + weight * T_m0_den + weight * T_m45_den
-            T_hex_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
-            
             T_total = get_square_density(a_sub, X_den, Y_den) * T_hex_den
+            
+            # FFT mapping (Panel 3)
+            T_base_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            T_m0_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, -theta_deg)
+            T_m45_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, 90.0 - theta_deg)
+            T_hex_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_hex_fft
             
-            # Gently ripple visual coordinates to match the FK pinning envelope
-            vis_top[:,0] -= np.sin(q_s * vis_top[:,0]) * amp
-            vis_top[:,1] -= np.sin(q_s * vis_top[:,1]) * amp
         else:
             T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
@@ -248,7 +272,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
         label1, label2 = r"Layer 1 (Bi$_2$Se$_3$)", r"Layer 2 (MoS$_2$)"
-        V_sub, invV_sub = V_bise, invV_bise
+        V_sub, invV_sub = V_bise, invV_bise 
         
         mask_sub = (np.abs(pts_bise_base[:, 0]) < current_fov) & (np.abs(pts_bise_base[:, 1]) < current_fov)
         vis_base = pts_bise_base[mask_sub]
@@ -293,7 +317,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_base = pts_grap_base[mask_sub]
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
-
+        
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
         T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
         
@@ -563,12 +587,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 3: LEED FFT
     # ------------------------------------------
-    # Minimal anti-aliasing ONLY
     T_fft = ndimage.gaussian_filter(T_fft, sigma=0.5) 
     T_centered_windowed = (T_fft - np.mean(T_fft)) * window_2d
     
-    # Dodecagonal Quasi-Crystalline pattern emerges purely and analytically 
-    # from the coherent spatial superposition calculated in the routing block.
     intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
@@ -581,7 +602,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
     
     if 'Hex-on-Square' in system_mode and enable_kinematic and strain_coupling > 0:
-        # Visually map the theoretically predicted mirrored spots forming the Dodecagonal state
         G2_m0 = get_hex_G(a_mos2, -theta_deg)
         G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
         ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 0° Mirror')
@@ -663,7 +683,7 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     st.markdown("**1. Kinematic Strain & Simulated LEED**")
     kcol1, kcol2 = st.columns(2)
     with kcol1:
-        enable_kinematic = st.checkbox("Enable Kinematic Strain & LEED", value=False, help="Activates the Substrate-Driven Dodecagonal Quasicrystal phase.")
+        enable_kinematic = st.checkbox("Enable Dodecagonal Quasicrystal State", value=False, help="Activates the physical 12-fold fractal domain restructuring and resonant electronic reflections.")
     with kcol2:
         strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Strong 12-fold Quasi-periodic resonance.")
         
