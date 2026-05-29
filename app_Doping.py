@@ -9,7 +9,6 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
-from scipy.interpolate import RegularGridInterpolator
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -143,42 +142,42 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
-# --- PHYSICAL DISLOCATION GLASS MODEL (INTERPOLATED NOISE FIELD) ---
-def get_glassy_field(L_max, N_grid, coupling):
+# --- TRUE CONTINUOUS GLASSY FIELD (MODE 2) ---
+def get_glassy_field_continuous(X, Y, coupling):
     """
-    Generates a mathematically pristine, C-infinity continuous Gaussian random field.
-    This seamlessly creates real-space mosaicity and reciprocal-space circular blobs 
-    WITHOUT generating satellite streaks or grid-aliasing artifacts.
+    Generates a perfectly smooth, non-periodic displacement field using 150 random sine waves.
+    Eliminates all discrete spatial aliasing/pixelation in real space, and natively generates 
+    pristine circular blobs in reciprocal space without satellite artifacts.
     """
-    rng = np.random.default_rng(42) # Seeded for UI stability
-    L_pad = L_max * 1.5 
-    dx = L_pad / N_grid
-    corr_L = 35.0 # Average coherent domain size ~35 Angstroms
-    sigma = corr_L / dx
+    if coupling == 0:
+        return np.zeros_like(X), np.zeros_like(Y)
+        
+    rng = np.random.default_rng(42)
+    Ux = np.zeros_like(X)
+    Uy = np.zeros_like(Y)
     
-    noise_x = rng.normal(0, 1, (N_grid, N_grid))
-    noise_y = rng.normal(0, 1, (N_grid, N_grid))
+    N_waves = 150
+    k0 = 2 * np.pi / 40.0 # ~40 A domain correlation length
     
-    ux = ndimage.gaussian_filter(noise_x, sigma, mode='wrap')
-    uy = ndimage.gaussian_filter(noise_y, sigma, mode='wrap')
+    # Pre-generate random variables
+    ks = rng.normal(k0, k0*0.3, N_waves)
+    thetas = rng.uniform(0, 2*np.pi, N_waves)
+    phases = rng.uniform(0, 2*np.pi, N_waves)
+    dir_angs = rng.uniform(0, 2*np.pi, N_waves)
     
-    rms = np.sqrt(np.mean(ux**2 + uy**2)) + 1e-10
+    kxs = ks * np.cos(thetas)
+    kys = ks * np.sin(thetas)
+    cos_dirs = np.cos(dir_angs)
+    sin_dirs = np.sin(dir_angs)
     
-    # 1.2 Angstroms of absolute displacement over a 35 Angstrom domain 
-    # yields a strictly safe, physical maximum local strain of ~3.4%.
-    amp = coupling * 1.2
-    ux = (ux / rms) * amp
-    uy = (uy / rms) * amp
-    
-    y_lin = np.linspace(-L_pad/2, L_pad/2, N_grid)
-    x_lin = np.linspace(-L_pad/2, L_pad/2, N_grid)
-    
-    # Fast bivariate spline mapping allows identical continuous evaluation on both 
-    # the structured FFT grid and the chaotic real-space atomic scatter points.
-    interp_x = RegularGridInterpolator((y_lin, x_lin), ux, bounds_error=False, fill_value=0)
-    interp_y = RegularGridInterpolator((y_lin, x_lin), uy, bounds_error=False, fill_value=0)
-    
-    return interp_x, interp_y
+    for i in range(N_waves):
+        wave = np.sin(X*kxs[i] + Y*kys[i] + phases[i])
+        Ux += wave * cos_dirs[i]
+        Uy += wave * sin_dirs[i]
+        
+    rms = np.sqrt(np.mean(Ux**2 + Uy**2) + 1e-10)
+    amp = coupling * 1.0 # Max ~1.0 A shift over 40A keeps local strain safe (<3.5%)
+    return (Ux / rms) * amp, (Uy / rms) * amp
 
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
@@ -241,16 +240,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         # --- THE THREE-STATE INTERFACIAL PHYSICS ENGINE ---
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             # MODE 2: Experimental Reality (Continuous mosaicity generating circular blobs)
-            L_max = max(current_fov * 3, 400.0)
-            interp_x, interp_y = get_glassy_field(L_max, 512, strain_coupling)
-            
-            pts_den = np.stack([Y_den.ravel(), X_den.ravel()], axis=-1)
-            Ux_den = interp_x(pts_den).reshape(X_den.shape)
-            Uy_den = interp_y(pts_den).reshape(Y_den.shape)
-            
-            pts_fft = np.stack([Y_fft.ravel(), X_fft.ravel()], axis=-1)
-            Ux_fft = interp_x(pts_fft).reshape(X_fft.shape)
-            Uy_fft = interp_y(pts_fft).reshape(Y_fft.shape)
+            Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
+            Ux_fft, Uy_fft = get_glassy_field_continuous(X_fft, Y_fft, strain_coupling)
+            Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
             
             T_base_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
             T_total = get_square_density(a_sub, X_den, Y_den) * T_base_den
@@ -259,27 +251,32 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             T_base_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_base_fft
             
-            # Map structural rippling to atoms for Topology rendering
-            pts_vis = np.stack([vis_top[:,1], vis_top[:,0]], axis=-1)
-            vis_top[:,0] += interp_x(pts_vis)
-            vis_top[:,1] += interp_y(pts_vis)
+            # Map smooth structural rippling to atoms for perfectly wavy Topology rendering
+            vis_top[:,0] -= Ux_pts
+            vis_top[:,1] -= Uy_pts
 
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-            # MODE 3: Theoretical CDW Phase (12-fold super-position without atomic shredding)
-            weight = strain_coupling * 0.45 
+            # MODE 3: Theoretical CDW Phase (12-fold resonance)
+            weight = strain_coupling * 0.5 
             
+            # Panel 2 Density
             T_base_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_m0_den = get_hex_density(a_mos2, X_den, Y_den, -theta_deg)
             T_m45_den = get_hex_density(a_mos2, X_den, Y_den, 90.0 - theta_deg)
             T_hex_den = T_base_den + weight * T_m0_den + weight * T_m45_den
             T_total = get_square_density(a_sub, X_den, Y_den) * T_hex_den
             
+            # Panel 3 LEED: Fixes satellite explosion. 
+            # Primary atomic lattice generates standard Moiré with substrate.
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+            T_fft_atomic = get_square_density(a_sub, X_fft, Y_fft) * T_base_fft
+            
+            # CDW electronic reflections are additive, keeping the LEED pristine and exactly 12-fold
             T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
             T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
-            T_hex_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
-            T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_hex_fft
-            # vis_top remains perfectly undisturbed to showcase electronic origin
+            T_fft = T_fft_atomic + (weight * 2.0 * T_m0_fft) + (weight * 2.0 * T_m45_fft)
+            
+            # vis_top remains perfectly undisturbed. Panel 1 domains stay perfectly straight.
 
         else:
             # MODE 1: Rigid vdW limit
@@ -615,7 +612,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 3: LEED FFT
     # ------------------------------------------
-    T_fft = ndimage.gaussian_filter(T_fft, sigma=0.5) 
+    # Applying minor anti-aliasing.
+    T_fft = ndimage.gaussian_filter(T_fft, sigma=0.6) 
     T_centered_windowed = (T_fft - np.mean(T_fft)) * window_2d
     
     intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
@@ -669,8 +667,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
-    lbl1_short = 'SrTiO₃' if 'SrTiO₃' in label1 else ('FeSe' if 'FeSe' in label1 else ('Bi₂Se₃' if 'Bi₂Se₃' in label1 else 'Graphene'))
-    lbl2_short = 'MoS₂' if 'MoS₂' in label2 else 'Rotated'
+    # FIXED LEGEND LABELS (LaTeX string match corrected)
+    lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene'))
+    lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
 
     ax3.plot([], [], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks')
     ax3.plot([], [], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks')
