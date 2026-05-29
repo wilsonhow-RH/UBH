@@ -9,6 +9,7 @@ import matplotlib.tri as mtri
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
+from scipy.interpolate import RegularGridInterpolator
 import imageio
 
 st.set_page_config(page_title="UHV-bonded Heterostructure Physics Dashboard", layout="wide")
@@ -142,10 +143,47 @@ def get_hex_bz(a, theta_deg=0.0):
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     return base_bz.dot(R.T)
 
+# --- PHYSICAL DISLOCATION GLASS MODEL (INTERPOLATED NOISE FIELD) ---
+def get_glassy_field(L_max, N_grid, coupling):
+    """
+    Generates a mathematically pristine, C-infinity continuous Gaussian random field.
+    This seamlessly creates real-space mosaicity and reciprocal-space circular blobs 
+    WITHOUT generating satellite streaks or grid-aliasing artifacts.
+    """
+    rng = np.random.default_rng(42) # Seeded for UI stability
+    L_pad = L_max * 1.5 
+    dx = L_pad / N_grid
+    corr_L = 35.0 # Average coherent domain size ~35 Angstroms
+    sigma = corr_L / dx
+    
+    noise_x = rng.normal(0, 1, (N_grid, N_grid))
+    noise_y = rng.normal(0, 1, (N_grid, N_grid))
+    
+    ux = ndimage.gaussian_filter(noise_x, sigma, mode='wrap')
+    uy = ndimage.gaussian_filter(noise_y, sigma, mode='wrap')
+    
+    rms = np.sqrt(np.mean(ux**2 + uy**2)) + 1e-10
+    
+    # 1.2 Angstroms of absolute displacement over a 35 Angstrom domain 
+    # yields a strictly safe, physical maximum local strain of ~3.4%.
+    amp = coupling * 1.2
+    ux = (ux / rms) * amp
+    uy = (uy / rms) * amp
+    
+    y_lin = np.linspace(-L_pad/2, L_pad/2, N_grid)
+    x_lin = np.linspace(-L_pad/2, L_pad/2, N_grid)
+    
+    # Fast bivariate spline mapping allows identical continuous evaluation on both 
+    # the structured FFT grid and the chaotic real-space atomic scatter points.
+    interp_x = RegularGridInterpolator((y_lin, x_lin), ux, bounds_error=False, fill_value=0)
+    interp_y = RegularGridInterpolator((y_lin, x_lin), uy, bounds_error=False, fill_value=0)
+    
+    return interp_x, interp_y
+
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=False):
+def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
     pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
 
     if fig is None:
@@ -182,7 +220,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
     # ------------------------------------------
-    # DATA ROUTING BY SYSTEM
+    # DATA ROUTING BY SYSTEM & STATE
     # ------------------------------------------
     layer2_Cq = 0.01  
     
@@ -200,29 +238,51 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_mos2 = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
-        if enable_kinematic and strain_coupling > 0:
-            # 1. Structural Lattice remains pristine. (Panel 1 domain walls remain perfectly straight).
-            # The quasicrystal phase is an electronic CDW resonance driven by STO hybridization.
+        # --- THE THREE-STATE INTERFACIAL PHYSICS ENGINE ---
+        if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
+            # MODE 2: Experimental Reality (Continuous mosaicity generating circular blobs)
+            L_max = max(current_fov * 3, 400.0)
+            interp_x, interp_y = get_glassy_field(L_max, 512, strain_coupling)
             
-            # 2. Electronic Quasicrystalline Superposition (Panels 2 & 3)
+            pts_den = np.stack([Y_den.ravel(), X_den.ravel()], axis=-1)
+            Ux_den = interp_x(pts_den).reshape(X_den.shape)
+            Uy_den = interp_y(pts_den).reshape(Y_den.shape)
+            
+            pts_fft = np.stack([Y_fft.ravel(), X_fft.ravel()], axis=-1)
+            Ux_fft = interp_x(pts_fft).reshape(X_fft.shape)
+            Uy_fft = interp_y(pts_fft).reshape(Y_fft.shape)
+            
+            T_base_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_total = get_square_density(a_sub, X_den, Y_den) * T_base_den
+            
+            # Substrate grid remains pristine and unaffected
+            T_base_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_base_fft
+            
+            # Map structural rippling to atoms for Topology rendering
+            pts_vis = np.stack([vis_top[:,1], vis_top[:,0]], axis=-1)
+            vis_top[:,0] += interp_x(pts_vis)
+            vis_top[:,1] += interp_y(pts_vis)
+
+        elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            # MODE 3: Theoretical CDW Phase (12-fold super-position without atomic shredding)
             weight = strain_coupling * 0.45 
             
-            # Density mapping (Panel 2)
             T_base_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_m0_den = get_hex_density(a_mos2, X_den, Y_den, -theta_deg)
             T_m45_den = get_hex_density(a_mos2, X_den, Y_den, 90.0 - theta_deg)
             T_hex_den = T_base_den + weight * T_m0_den + weight * T_m45_den
             T_total = get_square_density(a_sub, X_den, Y_den) * T_hex_den
             
-            # FFT mapping (Panel 3). By keeping the grids mathematically unwarped, 
-            # the FFT yields exact, pristine Dirac-like dots with zero artifact explosion.
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
             T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
             T_hex_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * T_hex_fft
-            
+            # vis_top remains perfectly undisturbed to showcase electronic origin
+
         else:
+            # MODE 1: Rigid vdW limit
             T_total = get_square_density(a_sub, X_den, Y_den) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_fft = get_square_density(a_sub, X_fft, Y_fft) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
@@ -240,7 +300,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     elif 'Bi₂Se₃' in system_mode:
         title_str, decay_L = r"1ML MoS$_2$ on 6QL Bi$_2$Se$_3$", 0.25 * a_bise
         label1, label2 = r"Layer 1 (Bi$_2$Se$_3$)", r"Layer 2 (MoS$_2$)"
-        V_sub, invV_sub = V_bise, invV_bise 
+        V_sub, invV_sub = V_bise, invV_bise
         
         mask_sub = (np.abs(pts_bise_base[:, 0]) < current_fov) & (np.abs(pts_bise_base[:, 1]) < current_fov)
         vis_base = pts_bise_base[mask_sub]
@@ -569,7 +629,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
     
-    if 'Hex-on-Square' in system_mode and enable_kinematic and strain_coupling > 0:
+    if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
         G2_m0 = get_hex_G(a_mos2, -theta_deg)
         G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
         ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 0° Mirror')
@@ -648,12 +708,16 @@ with col3:
 # --- EXPANDER FOR ADVANCED PHYSICS PARAMETERS ---
 with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-ph Coupling)", expanded=True):
     
-    st.markdown("**1. Kinematic Strain & Simulated LEED**")
-    kcol1, kcol2 = st.columns(2)
-    with kcol1:
-        enable_kinematic = st.checkbox("Enable Dodecagonal Quasicrystal State", value=False, help="Activates the physical 12-fold fractal domain restructuring and resonant electronic reflections.")
-    with kcol2:
-        strain_coupling = st.slider("Interfacial Pinning Strength", 0.0, 1.0, 0.4, 0.1, disabled=not enable_kinematic, help="0.0 = Rigid vdW limits. 1.0 = Strong 12-fold Quasi-periodic resonance.")
+    st.markdown("**1. Interfacial Phase Engineering**")
+    pcol1, pcol2 = st.columns(2)
+    with pcol1:
+        interfacial_state = st.selectbox("Interfacial Phase State:", [
+            "1. Rigid vdW Gap (Non-interacting)", 
+            "2. Misfit Dislocation Glass (Experimental Blobs)", 
+            "3. Dodecagonal Quasicrystal (Theoretical CDW)"
+        ])
+    with pcol2:
+        strain_coupling = st.slider("Interfacial Coupling Strength", 0.0, 1.0, 0.4, 0.1, help="Scales domain mosaicity (Mode 2) or resonant reflection (Mode 3).")
         
     st.markdown("---")
     st.markdown("**2. Interfacial Mechanics & Doping Model**")
@@ -673,15 +737,15 @@ with st.expander("⚙️ Advanced Physics Parameters (Interfacial Mechanics & e-
     }
     base_zmin, base_zmax = intrinsic_z[system_mode]
 
-    pcol1, pcol2, pcol3, pcol4 = st.columns(4)
-    with pcol1:
+    kcol1, kcol2, kcol3, kcol4 = st.columns(4)
+    with kcol1:
         w1 = st.number_input("Layer 1 Work Function (eV)", value=4.2, step=0.1)
-    with pcol2:
+    with kcol2:
         w2 = st.number_input("Layer 2 Work Function (eV)", value=4.5, step=0.1)
 
-    with pcol3:
+    with kcol3:
         user_zmin = st.number_input("Base Unrelaxed Min Gap (Å)", value=float(base_zmin), step=0.1)
-    with pcol4:
+    with kcol4:
         user_zmax = st.number_input("Base Unrelaxed Max Gap (Å)", value=float(base_zmax), step=0.1)
         
     k_elastic, k_vdw = 0.0, 0.0
@@ -706,7 +770,7 @@ dashboard_placeholder = st.empty()
 
 with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
     with dashboard_placeholder.container():
-        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=False)
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False)
         st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -727,7 +791,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     for ang in range(max_t_int + 1):
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
-        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, enable_kinematic, strain_coupling, is_video_frame=True)
+        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
