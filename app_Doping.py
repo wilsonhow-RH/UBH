@@ -152,7 +152,7 @@ def get_glassy_field_continuous(X, Y, coupling):
     Uy = np.zeros_like(Y)
     
     N_waves = 40 
-    k0 = 2 * np.pi / 120.0 
+    k0 = 2 * np.pi / 120.0 # Extremely slow spatial variation (120 A wavelength) to prevent grid shredding
     
     ks = rng.normal(k0, k0*0.2, N_waves)
     thetas = rng.uniform(0, 2*np.pi, N_waves)
@@ -175,12 +175,13 @@ def get_glassy_field_continuous(X, Y, coupling):
 # ==========================================
 def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
     pts_sq_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
-    
+
     show_fs_panel = ('FeSe' in system_mode)
 
     if fig is None:
         if show_fs_panel:
-            fig = Figure(figsize=(28, 6.5), dpi=100)
+            # Expand Figure to accommodate the massive double-sized Row 2
+            fig = Figure(figsize=(24, 18), dpi=100)
         else:
             fig = Figure(figsize=(21, 6.5), dpi=100)
         FigureCanvasAgg(fig) 
@@ -192,13 +193,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # Dynamic layout allocation
+    # ------------------------------------------
+    # DYNAMIC LAYOUT ALLOCATION
+    # ------------------------------------------
     if show_fs_panel:
-        gs = fig.add_gridspec(1, 7, width_ratios=[1, 0.04, 1, 0.04, 1, 0.04, 1], wspace=0.0, left=0.05, right=0.95, bottom=0.1, top=0.88)
-        ax1 = fig.add_subplot(gs[0])
-        ax2 = fig.add_subplot(gs[2])
-        ax3 = fig.add_subplot(gs[4])
-        ax4 = fig.add_subplot(gs[6])
+        gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.2], wspace=0.0, hspace=0.35, left=0.08, right=0.88, bottom=0.05, top=0.95)
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[0, 2])
+        ax3 = fig.add_subplot(gs[0, 4])
+        ax4 = fig.add_subplot(gs[1, :]) # Panel 4 spans entire bottom width, height forced by aspect
         axes = [ax1, ax2, ax3, ax4]
     else:
         gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.88, bottom=0.1, top=0.88)
@@ -222,10 +225,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     x_den = np.linspace(-current_fov, current_fov, N_den)
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
-
-    fft_render_mode = "rigid"
-    T_STO_fft = None
-    T_MoS2_fft = None
 
     # ------------------------------------------
     # DATA ROUTING BY SYSTEM & STATE
@@ -251,6 +250,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         # --- THE THREE-STATE INTERFACIAL PHYSICS ENGINE ---
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
+            # MODE 2: Experimental Reality (Continuous mosaicity generating circular blobs)
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
             Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
             
@@ -260,13 +260,17 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             vis_top[:,0] -= Ux_pts
             vis_top[:,1] -= Uy_pts
             
-            T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            fft_render_mode = "glass"
-            T_fft = T_STO_fft + T_MoS2_fft 
+            # Panel 3 Fix: Pure physical product naturally generates Moiré satellites 
+            # and flawless circular blobs via FFT without any Bessel explosion.
+            Ux_fft, Uy_fft = get_glassy_field_continuous(X_fft, Y_fft, strain_coupling)
+            T_MoS2_fft = get_hex_density(a_mos2, X_fft - Ux_fft, Y_fft - Uy_fft, theta_deg)
+            T_fft_engine = T_STO_fft * T_MoS2_fft 
 
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            # MODE 3: Theoretical CDW Phase
             weight = strain_coupling * 0.4
             
+            # Panel 2 Density
             T_base_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
             T_m0_den = get_hex_density(a_mos2, X_den, Y_den, -theta_deg)
             T_m45_den = get_hex_density(a_mos2, X_den, Y_den, 90.0 - theta_deg)
@@ -274,17 +278,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             T_MoS2_den = T_base_den + weight * T_m0_den + weight * T_m45_den
             T_total = T_STO_den * T_MoS2_den
             
+            # Panel 3 Fix: The product ensures primary Moiré satellites form cleanly. 
+            # Reflections are electronic additions. Zero artifacts.
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
             T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
             
-            T_fft = (T_STO_fft * T_base_fft) + (weight * 4.0 * T_m0_fft) + (weight * 4.0 * T_m45_fft)
-            fft_render_mode = "quasicrystal"
+            T_MoS2_fft = T_base_fft + weight * T_m0_fft + weight * T_m45_fft
+            T_fft_engine = T_STO_fft * T_MoS2_fft
+            
+            # vis_top remains perfectly undisturbed. Panel 1 domains stay perfectly straight.
 
         else:
+            # MODE 1: Rigid vdW limit
             T_total = T_STO_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_fft = T_STO_fft * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            fft_render_mode = "rigid"
+            T_fft_engine = T_STO_fft * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         nx, ny = np.round(vis_top[:, 0] / a_sub) * a_sub, np.round(vis_top[:, 1] / a_sub) * a_sub
         dist_co = np.sqrt((vis_top[:, 0] - nx)**2 + (vis_top[:, 1] - ny)**2)
@@ -308,7 +316,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_fft_engine = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -327,7 +335,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_fft_engine = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -347,7 +355,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
         T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
-        T_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
+        T_fft_engine = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -615,30 +623,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 3: LEED FFT
     # ------------------------------------------
+    # Center and apply generic instrument AA filter
+    T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
+    intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
-    if 'Hex-on-Square' in system_mode and fft_render_mode == "glass":
-        STO_centered = (T_STO_fft - np.mean(T_STO_fft)) * window_2d
-        MoS2_centered = (T_MoS2_fft - np.mean(T_MoS2_fft)) * window_2d
-        
-        int_STO = np.abs(np.fft.fftshift(np.fft.fft2(STO_centered)))**2
-        int_MoS2 = np.abs(np.fft.fftshift(np.fft.fft2(MoS2_centered)))**2
-        
-        blur_radius = 0.5 + strain_coupling * 4.0
-        int_MoS2 = ndimage.gaussian_filter(int_MoS2, sigma=blur_radius)
-        
-        intensity = int_STO + (int_MoS2 * 3.0) + 1e-10
-
-    elif 'Hex-on-Square' in system_mode and fft_render_mode == "quasicrystal":
-        T_centered_windowed = (T_fft - np.mean(T_fft)) * window_2d
-        intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
-        intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
-
-    else:
-        T_centered_windowed = (T_fft - np.mean(T_fft)) * window_2d
-        intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
-        intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
+    intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
     
+    # Floor raised to 1e-4 completely suppresses the cross-shaped Hanning window artifacts,
+    # ensuring ALL STO and primary points render as flawless, sharp circles.
     im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-4, vmax=np.max(intensity)))
     
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
@@ -687,6 +680,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
+    # Legend Bug Fix (Explicitly handles LaTeX substring)
     lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene'))
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
 
@@ -699,74 +693,123 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
 
     ax3.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
-    
+
     # ------------------------------------------
-    # PANEL 4: FERMI SURFACE MAP (ONLY FOR FeSe)
+    # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
     # ------------------------------------------
     if show_fs_panel and ax4 is not None:
-        ax4.set_xlim(-q_max, q_max)
-        ax4.set_ylim(-q_max, q_max)
-        ax4.set_title(f"Fermi Surface (Band Folding)\n{interfacial_state.split(':')[0]}", color='white', fontsize=13)
+        q_fs_max = q_max * 1.6
+        ax4.set_xlim(-q_fs_max, q_fs_max)
+        ax4.set_ylim(-q_fs_max, q_fs_max)
+        ax4.set_title(f"Fermi Surface Extended BZ (Mutual Band Folding)\n{interfacial_state.split(':')[0]}", color='white', fontsize=15)
         ax4.set_xlabel(r"$k_x$ ($\AA^{-1}$)", color='white')
+        ax4.set_ylabel(r"$k_y$ ($\AA^{-1}$)", color='white')
 
-        ax4.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8)
-        ax4.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8)
+        # Center guidelines
+        ax4.axhline(0, color='gray', lw=0.5, alpha=0.5)
+        ax4.axvline(0, color='gray', lw=0.5, alpha=0.5)
+        ax4.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle='-', linewidth=2.0, alpha=0.5)
+        ax4.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle='-', linewidth=2.0, alpha=0.5)
 
-        r_fese = 0.2
-        r_mos2 = 0.28
-        M_pts = BZ1_pts[:-1]
-        K_pts = BZ2_pts[:-1]
+        # Fermi wavevectors: FeSe > MoS2
+        r_fese = 0.35
+        r_mos2 = 0.20
+        
+        # Generator for Extended BZ G-vectors
+        q_fese = 2 * np.pi / a_fese
+        g1_A = np.array([q_fese, 0])
+        g1_B = np.array([0, q_fese])
+        
+        q_mos2 = 4 * np.pi / (np.sqrt(3) * a_mos2)
+        th_rad = np.radians(theta_deg)
+        R_m = np.array([[np.cos(th_rad), -np.sin(th_rad)], [np.sin(th_rad), np.cos(th_rad)]])
+        g2_A = np.array([0, q_mos2]).dot(R_m.T)
+        g2_B = np.array([q_mos2*np.sqrt(3)/2, -q_mos2*0.5]).dot(R_m.T)
+        
+        G1_all, G1_shell1, G1_shell2 = [], [], []
+        for n in range(-4, 5):
+            for m in range(-4, 5):
+                G = n*g1_A + m*g1_B
+                G1_all.append(G)
+                d = np.linalg.norm(G)
+                if abs(d - q_fese) < 1e-3: G1_shell1.append(G)
+                elif abs(d - q_fese*np.sqrt(2)) < 1e-3: G1_shell2.append(G)
+        
+        G2_all, G2_shell1, G2_shell2 = [], [], []
+        for n in range(-4, 5):
+            for m in range(-4, 5):
+                G = n*g2_A + m*g2_B
+                G2_all.append(G)
+                d = np.linalg.norm(G)
+                if abs(d - q_mos2) < 1e-3: G2_shell1.append(G)
+                elif abs(d - q_mos2*np.sqrt(3)) < 1e-3: G2_shell2.append(G)
+                
+        # Primary Pockets
+        M_base = np.array([q_fese/2, q_fese/2])
+        M_pts = [M_base + G for G in G1_all]
+        
+        K_pts = []
+        K_angles = np.radians(np.arange(30, 360, 60))
+        K_bases = [np.array([q_mos2/np.sqrt(3) * np.cos(a), q_mos2/np.sqrt(3) * np.sin(a)]).dot(R_m.T) for a in K_angles]
+        for G in G2_all:
+            for kb in K_bases:
+                K_pts.append(kb + G)
+                
+        # Fast Plotting Helper
+        def plot_fs(ax, centers, r, col, lw, ls, alpha, lbl=None):
+            for idx, pt in enumerate(centers):
+                # Optimization: Only plot pockets within the visible view limits
+                if abs(pt[0]) > q_fs_max + r or abs(pt[1]) > q_fs_max + r: continue
+                l = lbl if idx == 0 else None
+                ax.add_patch(plt.Circle((pt[0], pt[1]), r, color=col, fill=False, lw=lw, ls=ls, alpha=alpha, label=l))
 
-        # Draw primary un-folded FS pockets
-        for pt in M_pts:
-            ax4.add_patch(plt.Circle((pt[0], pt[1]), r_fese, color='cyan', fill=False, lw=2, alpha=0.9))
-        for pt in K_pts:
-            ax4.add_patch(plt.Circle((pt[0], pt[1]), r_mos2, color='red', fill=False, lw=2, alpha=0.9))
+        plot_fs(ax4, M_pts, r_fese, 'cyan', 2.5, '-', 1.0, 'Primary FeSe (M-pts)')
+        plot_fs(ax4, K_pts, r_mos2, 'red', 2.5, '-', 1.0, 'Primary MoS$_2$ (K-pts)')
 
         legend_elements_4 = [
-            mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=2, label='FeSe Primary FS'),
-            mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=2, label='MoS$_2$ Primary FS')
+            mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=2.5, label='Primary FeSe FS'),
+            mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=2.5, label='Primary MoS$_2$ FS')
         ]
 
-        if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
-            if q1 is not None and q2 is not None:
-                # Experimental glassy band folding: Pockets fold via the primary Moire wavevectors, 
-                # but decoherence causes significant momentum blurring/broadening in the spectral weight.
-                q_vecs = [q1, -q1, q2, -q2]
-                for k in K_pts:
-                    for qv in q_vecs:
-                        ax4.add_patch(plt.Circle((k[0]+qv[0], k[1]+qv[1]), r_mos2, color='red', fill=False, lw=2, ls='--', alpha=0.3 + 0.3*strain_coupling))
-                
-                legend_elements_4.append(mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=2, linestyle='--', alpha=0.6, label='Folded FS (Moiré)'))
-                
-                # Annotate exact matching q_M vector mapped from Panel 3
-                if len(K_pts) > 0:
-                    start_pt = K_pts[2]
-                    ax4.annotate("", xy=start_pt + q1, xytext=start_pt, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
-                    ax4.annotate(r"$\mathbf{q}_{M1}$", xy=start_pt + q1/2, xytext=(4, 4), textcoords="offset points", color="yellow", fontsize=10)
-
-        elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-            # Theoretical quasicrystalline folding: Coherent mirror reflections generate the 12-fold rosette
-            weight = strain_coupling
-            K_pts_m0 = get_hex_bz(a_mos2, -theta_deg)[:-1]
-            K_pts_m45 = get_hex_bz(a_mos2, 90.0 - theta_deg)[:-1]
-
-            for pt in K_pts_m0:
-                ax4.add_patch(plt.Circle((pt[0], pt[1]), r_mos2, color='orange', fill=False, lw=2, alpha=0.7*weight))
-            for pt in K_pts_m45:
-                ax4.add_patch(plt.Circle((pt[0], pt[1]), r_mos2, color='magenta', fill=False, lw=2, alpha=0.7*weight))
-
-            BZ_m0 = get_hex_bz(a_mos2, -theta_deg)
-            BZ_m45 = get_hex_bz(a_mos2, 90.0 - theta_deg)
-            ax4.plot(BZ_m0[:,0], BZ_m0[:,1], color='orange', linestyle=':', lw=1.0, alpha=0.4)
-            ax4.plot(BZ_m45[:,0], BZ_m45[:,1], color='magenta', linestyle=':', lw=1.0, alpha=0.4)
+        if strain_coupling > 0 and interfacial_state != "1. Rigid vdW Gap (Non-interacting)":
+            is_glass = "Glass" in interfacial_state
+            
+            alpha1 = 0.4 if is_glass else 0.8
+            alpha2 = 0.2 if is_glass else 0.5
+            lw_mod1 = 4.0 if is_glass else 1.5
+            lw_mod2 = 4.0 if is_glass else 1.0
+            
+            # 1st Order Mutual Umklapp (Scattered by 1st shell of opposing reciprocal vectors)
+            M_1st = [m + g for m in M_pts for g in G2_shell1]
+            K_1st = [k + g for k in K_pts for g in G1_shell1]
+            plot_fs(ax4, M_1st, r_fese, 'cyan', lw_mod1, '--', alpha1 * strain_coupling)
+            plot_fs(ax4, K_1st, r_mos2, 'red', lw_mod1, '--', alpha1 * strain_coupling)
+            
+            # 2nd Order Cascade
+            M_2nd = [m + g for m in M_pts for g in G2_shell2]
+            K_2nd = [k + g for k in K_pts for g in G1_shell2]
+            plot_fs(ax4, M_2nd, r_fese, 'cyan', lw_mod2, ':', alpha2 * strain_coupling)
+            plot_fs(ax4, K_2nd, r_mos2, 'red', lw_mod2, ':', alpha2 * strain_coupling)
 
             legend_elements_4.extend([
-                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='orange', markersize=8, lw=2, label='MoS$_2$ 0° Replica'),
-                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='magenta', markersize=8, lw=2, label='MoS$_2$ 45° Replica')
+                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=lw_mod1, ls='--', alpha=alpha1, label='FeSe Folded (by MoS$_2$)'),
+                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=lw_mod1, ls='--', alpha=alpha1, label='MoS$_2$ Folded (by FeSe)')
             ])
 
-        ax4.legend(handles=legend_elements_4, loc='upper right', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8)
+            if "Quasicrystal" in interfacial_state:
+                # 12-Fold QC Reflected States
+                K_m0 = np.array([[k[0], -k[1]] for k in K_pts])
+                K_m45 = np.array([[k[1], k[0]] for k in K_pts])
+                
+                plot_fs(ax4, K_m0, r_mos2, 'orange', 2.0, '-', 0.6 * strain_coupling)
+                plot_fs(ax4, K_m45, r_mos2, 'magenta', 2.0, '-', 0.6 * strain_coupling)
+
+                legend_elements_4.extend([
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='orange', markersize=8, lw=2.0, alpha=0.6, label='MoS$_2$ 0° Replica'),
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='magenta', markersize=8, lw=2.0, alpha=0.6, label='MoS$_2$ 45° Replica')
+                ])
+
+        ax4.legend(handles=legend_elements_4, loc='upper right', bbox_to_anchor=(1.03, 1.02), fontsize=10, framealpha=0.9)
         
     return fig
 
@@ -871,7 +914,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     vid_progress = st.progress(0, text=f"Rendering frame 1 of {max_t_int + 1}...")
     
     frames = []
-    video_fig = Figure(figsize=(28, 6.5) if 'FeSe' in system_mode else (21, 6.5), dpi=100) 
+    video_fig = Figure(figsize=(24, 18) if 'FeSe' in system_mode else (21, 6.5), dpi=100) 
     FigureCanvasAgg(video_fig)
     
     for ang in range(max_t_int + 1):
