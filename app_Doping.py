@@ -143,11 +143,6 @@ def get_hex_bz(a, theta_deg=0.0):
     return base_bz.dot(R.T)
 
 def get_glassy_field_continuous(X, Y, coupling):
-    """
-    Generates a physically continuous long-wavelength displacement field.
-    A slow 120 A wavelength avoids any discrete "shredding" of local Moiré domains
-    while properly accumulating macroscopic phase shift for perfect LEED blobs.
-    """
     if coupling == 0:
         return np.zeros_like(X), np.zeros_like(Y)
     
@@ -184,7 +179,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
     if fig is None:
         if show_fs_panel:
-            # Expand Figure to accommodate the massive double-sized Row 2
             fig = Figure(figsize=(24, 18), dpi=100)
         else:
             fig = Figure(figsize=(21, 6.5), dpi=100)
@@ -230,6 +224,10 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
+    fft_render_mode = "rigid"
+    T_STO_fft = None
+    T_MoS2_fft = None
+
     # ------------------------------------------
     # DATA ROUTING BY SYSTEM & STATE
     # ------------------------------------------
@@ -254,7 +252,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         # --- THE THREE-STATE INTERFACIAL PHYSICS ENGINE ---
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
-            # MODE 2: Experimental Misfit Glass
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
             Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
             
@@ -264,14 +261,11 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             vis_top[:,0] -= Ux_pts
             vis_top[:,1] -= Uy_pts
             
-            # Panel 3 FIX: Evaluating the unwarped fields physically couples the potentials 
-            # and naturally generates Moiré satellites in reciprocal space with zero artifacts.
             T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_fft_engine = T_STO_fft * T_MoS2_fft
+            T_fft_engine = T_STO_fft * T_MoS2_fft 
             fft_render_mode = "glass"
 
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-            # MODE 3: Theoretical Electronic Quasicrystal
             weight = strain_coupling * 0.4
             
             T_base_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
@@ -281,8 +275,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             T_MoS2_den = T_base_den + weight * T_m0_den + weight * T_m45_den
             T_total = T_STO_den * T_MoS2_den
             
-            # Panel 3 FIX: Evaluating unwarped fields prevents satellite explosion.
-            # Additive resonances cleanly superimpose 12-fold symmetry.
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
             T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
@@ -292,9 +284,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             fft_render_mode = "quasicrystal"
 
         else:
-            # MODE 1: Rigid vdW limit
             T_total = T_STO_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            # Panel 3 FIX: Pure additive superposition guarantees NO Moiré satellites.
             T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             T_fft_engine = T_STO_fft + T_MoS2_fft
             fft_render_mode = "rigid"
@@ -628,9 +618,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 3: LEED FFT
     # ------------------------------------------
+    q_min, q_max_fft = q_freq[0], q_freq[-1]
+    
     if 'Hex-on-Square' in system_mode and fft_render_mode == "glass":
-        # PHYSICS FIX: Separating the FFT calculation physically prevents blurring the STO substrate.
-        # MoS2 is separately filtered to simulate the continuous real-space Misfit Glass mosaicity.
         STO_centered = (T_STO_fft - np.mean(T_STO_fft)) * window_2d
         MoS2_centered = (T_MoS2_fft - np.mean(T_MoS2_fft)) * window_2d
         
@@ -642,14 +632,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         intensity = int_STO + (int_MoS2 * 3.0) + 1e-10
 
+    elif 'Hex-on-Square' in system_mode and fft_render_mode == "quasicrystal":
+        T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
+        intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
+        intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
+
     else:
-        # Standard Rigid and Quasicrystal Models
         T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
         intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
         intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
     
-    # PHYSICS FIX: Floor strictly raised to 1e-4. This permanently suppresses 
-    # the unphysical cross-shaped Hanning window artifacts entirely.
     im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-4, vmax=np.max(intensity)))
     
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
@@ -698,7 +690,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
         ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
         
-    # PHYSICS FIX: Explicit string handling properly labels MoS2 and STO 
     lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene'))
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
 
@@ -716,6 +707,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
     # ------------------------------------------
     if show_fs_panel and ax4 is not None:
+        q_fs_max = q_max * 1.6
         ax4.set_xlim(-k_max, k_max)
         ax4.set_ylim(-k_max, k_max)
         ax4.set_title(f"Fermi Surface Extended BZ (Mutual Band Folding)\n{interfacial_state.split(':')[0]}", color='white', fontsize=15)
@@ -725,11 +717,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax4.axhline(0, color='gray', lw=0.5, alpha=0.5)
         ax4.axvline(0, color='gray', lw=0.5, alpha=0.5)
 
-        # PHYSICS FIX: Accurate FS Radii
         r_fese = 0.175
         r_mos2 = 0.10
         
-        # 1. Square FeSe Extended Lattice (M-points)
         q_fese = 2 * np.pi / a_fese
         G1_all, G1_shell1, G1_shell2 = [], [], []
         for n in range(-6, 7):
@@ -740,7 +730,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 if 0.1 < d < q_fese * 1.1: G1_shell1.append(G)
                 elif q_fese * 1.1 < d < q_fese * 1.5: G1_shell2.append(G)
                 
-        # 2. Hexagonal MoS2 Extended Lattice (K-points)
         q_mos2 = 4 * np.pi / (np.sqrt(3) * a_mos2)
         th_rad = np.radians(theta_deg)
         R_m = np.array([[np.cos(th_rad), -np.sin(th_rad)], [np.sin(th_rad), np.cos(th_rad)]])
@@ -756,14 +745,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 if 0.1 < d < q_mos2 * 1.1: G2_shell1.append(G)
                 elif q_mos2 * 1.1 < d < q_mos2 * 1.8: G2_shell2.append(G)
                 
-        # Primary Pocket Centers
         M_bases = [np.array([q_fese/2, q_fese/2]), np.array([-q_fese/2, q_fese/2]), np.array([-q_fese/2, -q_fese/2]), np.array([q_fese/2, -q_fese/2])]
         all_M_pts = [mb + G for G in G1_all for mb in M_bases]
         all_M_pts = np.array(all_M_pts)
         _, idx = np.unique(np.round(all_M_pts, 4), axis=0, return_index=True)
         M_pts = all_M_pts[idx]
         
-        # PHYSICS FIX: K-points explicitly forced to Hexagon corners (0, 60, 120...)
         K_mag = q_mos2 / np.sqrt(3)
         K_angles = np.radians(np.arange(0, 360, 60))
         K_bases = [np.array([K_mag * np.cos(a), K_mag * np.sin(a)]).dot(R_m.T) for a in K_angles]
@@ -772,7 +759,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         _, idx = np.unique(np.round(all_K_pts, 4), axis=0, return_index=True)
         K_pts = all_K_pts[idx]
         
-        # Plot Extended Brillouin Zones
         BZ_sq_base = get_square_bz(a_fese, 0.0)
         BZ_hex_base = get_hex_bz(a_mos2, theta_deg)
         
@@ -807,7 +793,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             lw_mod1 = 3.0 if is_glass else 1.5
             lw_mod2 = 3.0 if is_glass else 1.0
             
-            # PHYSICS FIX: Mutual Umklapp Band Folding (FeSe scattered by MoS2, MoS2 scattered by FeSe)
             M_1st = [m + g for m in M_pts for g in G2_shell1]
             K_1st = [k + g for k in K_pts for g in G1_shell1]
             plot_fs(ax4, M_1st, r_fese, 'cyan', lw_mod1, '--', alpha1 * strain_coupling)
