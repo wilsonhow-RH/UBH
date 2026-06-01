@@ -115,6 +115,14 @@ def get_hex_density(a, X_grid, Y_grid, theta_deg):
     q = 4 * np.pi / (np.sqrt(3) * a)
     return 3.0 + np.cos(q * Yr) + np.cos(q * (np.sqrt(3)/2 * Xr - 0.5 * Yr)) + np.cos(q * (-np.sqrt(3)/2 * Xr - 0.5 * Yr))
 
+def get_reflected_coords(X, Y, phi_deg):
+    """Reflects grid coordinates across a mirror plane at angle phi_deg."""
+    phi = np.radians(phi_deg)
+    c, s = np.cos(2*phi), np.sin(2*phi)
+    Xr = X * c + Y * s
+    Yr = X * s - Y * c
+    return Xr, Yr
+
 def get_square_G(a):
     q = 2 * np.pi / a
     return np.array([[q, 0], [-q, 0], [0, q], [0, -q]])
@@ -264,20 +272,38 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
             weight = strain_coupling * 0.4
             
+            # --- Density Space ---
             T_base_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_m0_den = get_hex_density(a_mos2, X_den, Y_den, -theta_deg)
-            T_m45_den = get_hex_density(a_mos2, X_den, Y_den, 90.0 - theta_deg)
-            
+            Xr_m0, Yr_m0 = get_reflected_coords(X_den, Y_den, 0.0)
+            Xr_m45, Yr_m45 = get_reflected_coords(X_den, Y_den, 45.0)
+            T_m0_den = get_hex_density(a_mos2, Xr_m0, Yr_m0, theta_deg)
+            T_m45_den = get_hex_density(a_mos2, Xr_m45, Yr_m45, theta_deg)
             T_MoS2_den = T_base_den + weight * T_m0_den + weight * T_m45_den
-            T_total = T_STO_den * T_MoS2_den
             
+            # Mutual Reflection: FeSe across MoS2 mirrors (theta, theta+30)
+            Xr_f1, Yr_f1 = get_reflected_coords(X_den, Y_den, theta_deg)
+            Xr_f2, Yr_f2 = get_reflected_coords(X_den, Y_den, theta_deg + 30.0)
+            T_fese_m1 = get_square_density(a_sub, Xr_f1, Yr_f1)
+            T_fese_m2 = get_square_density(a_sub, Xr_f2, Yr_f2)
+            T_STO_den_qc = T_STO_den + weight * T_fese_m1 + weight * T_fese_m2
+            
+            T_total = T_STO_den_qc * T_MoS2_den
+            
+            # --- Reciprocal Space ---
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
-            T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
-            
-            # Massive intensity boost for 12-fold reflection states so they dominate the FFT
+            Xf_m0, Yf_m0 = get_reflected_coords(X_fft, Y_fft, 0.0)
+            Xf_m45, Yf_m45 = get_reflected_coords(X_fft, Y_fft, 45.0)
+            T_m0_fft = get_hex_density(a_mos2, Xf_m0, Yf_m0, theta_deg)
+            T_m45_fft = get_hex_density(a_mos2, Xf_m45, Yf_m45, theta_deg)
             T_MoS2_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
-            T_fft_engine = T_STO_fft * T_MoS2_fft_qc
+            
+            Xf_f1, Yf_f1 = get_reflected_coords(X_fft, Y_fft, theta_deg)
+            Xf_f2, Yf_f2 = get_reflected_coords(X_fft, Y_fft, theta_deg + 30.0)
+            T_fese_m1_fft = get_square_density(a_sub, Xf_f1, Yf_f1)
+            T_fese_m2_fft = get_square_density(a_sub, Xf_f2, Yf_f2)
+            T_STO_fft_qc = T_STO_fft + (weight * 6.0 * T_fese_m1_fft) + (weight * 6.0 * T_fese_m2_fft)
+            
+            T_fft_engine = T_STO_fft_qc * T_MoS2_fft_qc
             fft_render_mode = "quasicrystal"
 
         else:
@@ -380,7 +406,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             pass
 
     # ------------------------------------------
-    # CONDITIONAL LEGEND COVERAGE
+    # SPEEDUP: CONDITIONAL LEGEND COVERAGE
     # ------------------------------------------
     if boundary_mode != 'None':
         fwhm_factor = 2 * np.sqrt(np.log(2))
@@ -642,12 +668,37 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
     ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
     
+    if 'Hex-on-Square' in system_mode and "Rigid" not in interfacial_state and strain_coupling > 0:
+        # Explicit Umklapp Markers to verify the mathematical convolution
+        G_umklapp = []
+        for g1 in G1_pts:
+            for g2 in G2_pts:
+                G_umklapp.append(g1 + g2)
+                G_umklapp.append(g1 - g2)
+        if G_umklapp:
+            G_umklapp = np.array(G_umklapp)
+            valid_mask = (np.abs(G_umklapp[:, 0]) < q_max) & (np.abs(G_umklapp[:, 1]) < q_max)
+            ax3.scatter(G_umklapp[valid_mask, 0], G_umklapp[valid_mask, 1], color='yellow', s=30, marker='x', alpha=0.7, zorder=4, label='1st Order Umklapp')
+
     if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+        # MoS2 Replicas
         G2_m0 = get_hex_G(a_mos2, -theta_deg)
         G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
-        ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 0° Mirror')
-        ax3.scatter(G2_m45[:, 0], G2_m45[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='STO 45° Mirror')
-    
+        ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 0° Replica')
+        ax3.scatter(G2_m45[:, 0], G2_m45[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 45° Replica')
+        
+        # FeSe Replicas
+        phi1 = np.radians(theta_deg)
+        phi2 = np.radians(theta_deg + 30.0)
+        c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
+        c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
+        
+        G1_m1 = np.array([[g[0]*c1 + g[1]*s1, g[0]*s1 - g[1]*c1] for g in G1_pts])
+        G1_m2 = np.array([[g[0]*c2 + g[1]*s2, g[0]*s2 - g[1]*c2] for g in G1_pts])
+        
+        ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg}° Replica')
+        ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg+30}° Replica')
+        
     if g1_A is not None and g2_A is not None:
         for i, (v1, v2) in enumerate([(g1_A, g2_A), (g1_B, g2_B)]):
             ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
@@ -685,15 +736,28 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene'))
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
 
-    ax3.plot([], [], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks')
-    ax3.plot([], [], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks')
-    ax3.plot([], [], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short} 1st BZ')
-    ax3.plot([], [], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short} 1st BZ')
-    ax3.plot([], [], color='cyan', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_1$')
-    ax3.plot([], [], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$')
-    ax3.plot([], [], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
+    legend_elements_3 = [
+        mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks'),
+        mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks'),
+        mlines.Line2D([0], [0], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short} 1st BZ'),
+        mlines.Line2D([0], [0], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short} 1st BZ'),
+        mlines.Line2D([0], [0], color='cyan', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_1$'),
+        mlines.Line2D([0], [0], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$'),
+        mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
+    ]
+    
+    if 'Hex-on-Square' in system_mode and "Rigid" not in interfacial_state and strain_coupling > 0:
+        legend_elements_3.append(mlines.Line2D([0], [0], color='none', marker='x', markeredgecolor='yellow', markersize=8, label='1st Order Umklapp'))
+        
+    if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+        legend_elements_3.extend([
+            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='orange', markersize=8, label='MoS$_2$ 0° Replica'),
+            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='magenta', markersize=8, label='MoS$_2$ 45° Replica'),
+            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='lime', markersize=8, label=f'FeSe {theta_deg}° Replica'),
+            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'FeSe {theta_deg+30}° Replica')
+        ])
 
-    ax3.legend(loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+    ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
@@ -768,8 +832,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 l = lbl if idx == 0 else None
                 ax.add_patch(plt.Circle((pt[0], pt[1]), r, color=col, fill=False, lw=lw, ls=ls, alpha=alpha, label=l))
 
-        plot_fs(ax4, M_pts, r_fese, 'cyan', 2.0, '-', 1.0, 'Primary FeSe (M-pts)')
-        plot_fs(ax4, K_pts, r_mos2, 'red', 2.0, '-', 1.0, 'Primary MoS$_2$ (K-pts)')
+        plot_fs(ax4, M_pts, r_fese, 'cyan', 2.5, '-', 1.0, 'Primary FeSe (M-pts)')
+        plot_fs(ax4, K_pts, r_mos2, 'red', 2.5, '-', 1.0, 'Primary MoS$_2$ (K-pts)')
 
         legend_elements_4 = [
             mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=2.5, label='Primary FeSe FS'),
@@ -779,8 +843,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         if strain_coupling > 0 and "Rigid" not in interfacial_state:
             is_glass = "Glass" in interfacial_state
             
-            alpha1 = 0.5 if is_glass else 0.8
-            alpha2 = 0.25 if is_glass else 0.5
+            alpha1 = 0.6 if is_glass else 0.8
+            alpha2 = 0.3 if is_glass else 0.5
             lw_mod1 = 3.0 if is_glass else 1.5
             lw_mod2 = 3.0 if is_glass else 1.0
             
@@ -802,17 +866,34 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             ])
 
             if "Quasicrystal" in interfacial_state:
+                # MoS2 Replicas (Driven by FeSe mirrors at 0, 45)
+                # Offset radius slightly to make the 0-deg replica definitively visible over the primary pocket
                 K_m0 = np.array([[k[0], -k[1]] for k in K_pts])
                 K_m45 = np.array([[k[1], k[0]] for k in K_pts])
                 
-                # PHYSICS FIX: Radius offset (1.08x) added to make the perfectly overlapping 
-                # 0-degree reflection explicitly visible as a dashed halo around the primary circle.
                 plot_fs(ax4, K_m0, r_mos2 * 1.08, 'orange', 2.0, '--', 0.9)
                 plot_fs(ax4, K_m45, r_mos2 * 1.08, 'magenta', 2.0, '--', 0.9)
 
                 legend_elements_4.extend([
                     mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='orange', markersize=8, lw=2.0, ls='--', alpha=0.9, label='MoS$_2$ 0° Replica'),
                     mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='magenta', markersize=8, lw=2.0, ls='--', alpha=0.9, label='MoS$_2$ 45° Replica')
+                ])
+                
+                # FeSe Replicas (Driven by MoS2 mirrors at theta, theta+30)
+                phi1 = np.radians(theta_deg)
+                phi2 = np.radians(theta_deg + 30.0)
+                c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
+                c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
+                
+                M_m1 = np.array([[m[0]*c1 + m[1]*s1, m[0]*s1 - m[1]*c1] for m in M_pts])
+                M_m2 = np.array([[m[0]*c2 + m[1]*s2, m[0]*s2 - m[1]*c2] for m in M_pts])
+                
+                plot_fs(ax4, M_m1, r_fese * 1.08, 'lime', 2.0, '--', 0.9)
+                plot_fs(ax4, M_m2, r_fese * 1.08, 'green', 2.0, '--', 0.9)
+                
+                legend_elements_4.extend([
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='lime', markersize=8, lw=2.0, ls='--', alpha=0.9, label=f'FeSe {theta_deg}° Replica'),
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='green', markersize=8, lw=2.0, ls='--', alpha=0.9, label=f'FeSe {theta_deg+30}° Replica')
                 ])
 
         ax4.legend(handles=legend_elements_4, loc='upper right', bbox_to_anchor=(1.03, 1.02), fontsize=10, framealpha=0.9)
