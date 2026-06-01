@@ -191,9 +191,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # ------------------------------------------
-    # DYNAMIC LAYOUT ALLOCATION
-    # ------------------------------------------
     if show_fs_panel:
         gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.88, bottom=0.05, top=0.95)
         ax1 = fig.add_subplot(gs[0, 0])
@@ -250,7 +247,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         T_STO_den = get_square_density(a_sub, X_den, Y_den)
         T_STO_fft = get_square_density(a_sub, X_fft, Y_fft)
         
-        # --- THE THREE-STATE INTERFACIAL PHYSICS ENGINE ---
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
             Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
@@ -279,7 +275,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             T_m0_fft = get_hex_density(a_mos2, X_fft, Y_fft, -theta_deg)
             T_m45_fft = get_hex_density(a_mos2, X_fft, Y_fft, 90.0 - theta_deg)
             
-            T_MoS2_fft_qc = T_base_fft + (weight * 4.0 * T_m0_fft) + (weight * 4.0 * T_m45_fft)
+            # Massive intensity boost for 12-fold reflection states so they dominate the FFT
+            T_MoS2_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
             T_fft_engine = T_STO_fft * T_MoS2_fft_qc
             fft_render_mode = "quasicrystal"
 
@@ -383,7 +380,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             pass
 
     # ------------------------------------------
-    # SPEEDUP: CONDITIONAL LEGEND COVERAGE
+    # CONDITIONAL LEGEND COVERAGE
     # ------------------------------------------
     if boundary_mode != 'None':
         fwhm_factor = 2 * np.sqrt(np.log(2))
@@ -632,11 +629,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         intensity = int_STO + (int_MoS2 * 3.0) + 1e-10
 
-    elif 'Hex-on-Square' in system_mode and fft_render_mode == "quasicrystal":
-        T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
-        intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
-        intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
-
     else:
         T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
         intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
@@ -707,7 +699,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
     # ------------------------------------------
     if show_fs_panel and ax4 is not None:
-        q_fs_max = q_max * 1.6
         ax4.set_xlim(-k_max, k_max)
         ax4.set_ylim(-k_max, k_max)
         ax4.set_title(f"Fermi Surface Extended BZ (Mutual Band Folding)\n{interfacial_state.split(':')[0]}", color='white', fontsize=15)
@@ -766,10 +757,10 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             for G in G_list:
                 if np.abs(G[0]) > k_max + 1 or np.abs(G[1]) > k_max + 1: continue
                 shifted = BZ_base + G
-                ax.plot(shifted[:,0], shifted[:,1], color=color, ls='-', lw=0.5, alpha=alpha)
+                ax.plot(shifted[:,0], shifted[:,1], color=color, ls='-', lw=1.5, alpha=max(alpha, 0.4))
                 
-        plot_bzs(ax4, G1_all, BZ_sq_base, 'cyan', 0.2)
-        plot_bzs(ax4, G2_all, BZ_hex_base, 'red', 0.2)
+        plot_bzs(ax4, G1_all, BZ_sq_base, 'cyan', 0.5)
+        plot_bzs(ax4, G2_all, BZ_hex_base, 'red', 0.5)
 
         def plot_fs(ax, centers, r, col, lw, ls, alpha, lbl=None):
             for idx, pt in enumerate(centers):
@@ -805,19 +796,23 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
             legend_elements_4.extend([
                 mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=lw_mod1, ls='--', alpha=alpha1, label='FeSe Folded (1st Order)'),
-                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=lw_mod1, ls='--', alpha=alpha1, label='MoS$_2$ Folded (1st Order)')
+                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=lw_mod1, ls='--', alpha=alpha1, label='MoS$_2$ Folded (1st Order)'),
+                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='cyan', markersize=8, lw=lw_mod2, ls=':', alpha=alpha2, label='FeSe Folded (2nd Order)'),
+                mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='red', markersize=8, lw=lw_mod2, ls=':', alpha=alpha2, label='MoS$_2$ Folded (2nd Order)')
             ])
 
             if "Quasicrystal" in interfacial_state:
                 K_m0 = np.array([[k[0], -k[1]] for k in K_pts])
                 K_m45 = np.array([[k[1], k[0]] for k in K_pts])
                 
-                plot_fs(ax4, K_m0, r_mos2, 'orange', 1.5, '-', 0.8 * strain_coupling)
-                plot_fs(ax4, K_m45, r_mos2, 'magenta', 1.5, '-', 0.8 * strain_coupling)
+                # PHYSICS FIX: Radius offset (1.08x) added to make the perfectly overlapping 
+                # 0-degree reflection explicitly visible as a dashed halo around the primary circle.
+                plot_fs(ax4, K_m0, r_mos2 * 1.08, 'orange', 2.0, '--', 0.9)
+                plot_fs(ax4, K_m45, r_mos2 * 1.08, 'magenta', 2.0, '--', 0.9)
 
                 legend_elements_4.extend([
-                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='orange', markersize=8, lw=2.0, alpha=0.8, label='MoS$_2$ 0° Replica'),
-                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='magenta', markersize=8, lw=2.0, alpha=0.8, label='MoS$_2$ 45° Replica')
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='orange', markersize=8, lw=2.0, ls='--', alpha=0.9, label='MoS$_2$ 0° Replica'),
+                    mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor='magenta', markersize=8, lw=2.0, ls='--', alpha=0.9, label='MoS$_2$ 45° Replica')
                 ])
 
         ax4.legend(handles=legend_elements_4, loc='upper right', bbox_to_anchor=(1.03, 1.02), fontsize=10, framealpha=0.9)
