@@ -42,8 +42,8 @@ if not check_password():
 # ==========================================
 @st.cache_resource
 def generate_base_grids():
-    a_sto, a_fese, a_mos2, a_bise, a_g = 3.905, 3.905, 3.15, 4.14, 2.46
-    a_cux, a_cuy = 3.61, 2.553  # Cu(110) Rectangular Surface        
+    a_sto, a_fese, a_mos2, a_bise, a_g = 3.905, 3.905, 3.15, 4.14, 2.46          
+    a_cux, a_cuy = 3.61, 2.553  
     base_grid = 40  
     max_grid = base_grid * 6 
 
@@ -251,13 +251,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
+    # ------------------------------------------
+    # VARIABLE STANDARDIZATION & DATA ROUTING
+    # ------------------------------------------
     fft_render_mode = "rigid"
-    T_STO_fft = None
-    T_MoS2_fft = None
-
-    # ------------------------------------------
-    # DATA ROUTING BY SYSTEM & STATE
-    # ------------------------------------------
+    T_sub_fft = None
+    T_top_fft = None
+    T_fft_engine = None
     layer2_Cq = 0.01  
     
     if 'Hex-on-Square' in system_mode:
@@ -274,21 +274,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_mos2 = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
-        T_STO_den = get_square_density(a_sub, X_den, Y_den)
-        T_STO_fft = get_square_density(a_sub, X_fft, Y_fft)
+        T_sub_den = get_square_density(a_sub, X_den, Y_den)
+        T_sub_fft = get_square_density(a_sub, X_fft, Y_fft)
         
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
             Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
             
-            T_MoS2_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_total = T_STO_den * T_MoS2_den
+            T_top_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_total = T_sub_den * T_top_den
             
             vis_top[:,0] -= Ux_pts
             vis_top[:,1] -= Uy_pts
             
-            T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_fft_engine = T_STO_fft * T_MoS2_fft 
+            T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+            T_fft_engine = T_sub_fft * T_top_fft 
             fft_render_mode = "glass"
 
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
@@ -299,36 +299,36 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             Xr_m45, Yr_m45 = get_reflected_coords(X_den, Y_den, 45.0)
             T_m0_den = get_hex_density(a_mos2, Xr_m0, Yr_m0, theta_deg)
             T_m45_den = get_hex_density(a_mos2, Xr_m45, Yr_m45, theta_deg)
-            T_MoS2_den = T_base_den + weight * T_m0_den + weight * T_m45_den
+            T_top_den_qc = T_base_den + weight * T_m0_den + weight * T_m45_den
             
             Xr_f1, Yr_f1 = get_reflected_coords(X_den, Y_den, theta_deg)
             Xr_f2, Yr_f2 = get_reflected_coords(X_den, Y_den, theta_deg + 30.0)
             T_fese_m1 = get_square_density(a_sub, Xr_f1, Yr_f1)
             T_fese_m2 = get_square_density(a_sub, Xr_f2, Yr_f2)
-            T_STO_den_qc = T_STO_den + weight * T_fese_m1 + weight * T_fese_m2
+            T_sub_den_qc = T_sub_den + weight * T_fese_m1 + weight * T_fese_m2
             
-            T_total = T_STO_den_qc * T_MoS2_den
+            T_total = T_sub_den_qc * T_top_den_qc
             
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             Xf_m0, Yf_m0 = get_reflected_coords(X_fft, Y_fft, 0.0)
             Xf_m45, Yf_m45 = get_reflected_coords(X_fft, Y_fft, 45.0)
             T_m0_fft = get_hex_density(a_mos2, Xf_m0, Yf_m0, theta_deg)
             T_m45_fft = get_hex_density(a_mos2, Xf_m45, Yf_m45, theta_deg)
-            T_MoS2_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
+            T_top_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
             
             Xf_f1, Yf_f1 = get_reflected_coords(X_fft, Y_fft, theta_deg)
             Xf_f2, Yf_f2 = get_reflected_coords(X_fft, Y_fft, theta_deg + 30.0)
             T_fese_m1_fft = get_square_density(a_sub, Xf_f1, Yf_f1)
             T_fese_m2_fft = get_square_density(a_sub, Xf_f2, Yf_f2)
-            T_STO_fft_qc = T_STO_fft + (weight * 6.0 * T_fese_m1_fft) + (weight * 6.0 * T_fese_m2_fft)
+            T_sub_fft_qc = T_sub_fft + (weight * 6.0 * T_fese_m1_fft) + (weight * 6.0 * T_fese_m2_fft)
             
-            T_fft_engine = T_STO_fft_qc * T_MoS2_fft_qc
+            T_fft_engine = T_sub_fft_qc * T_top_fft_qc
             fft_render_mode = "quasicrystal"
 
         else:
-            T_total = T_STO_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_fft_engine = T_STO_fft + T_MoS2_fft
+            T_total = T_sub_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+            T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+            T_fft_engine = T_sub_fft + T_top_fft
             fft_render_mode = "rigid"
         
         nx, ny = np.round(vis_top[:, 0] / a_sub) * a_sub, np.round(vis_top[:, 1] / a_sub) * a_sub
@@ -352,21 +352,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_mos2 = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_mos2].dot(R.T)
         
-        T_Cu_den = get_rect_density(a_sub_x, a_sub_y, X_den, Y_den)
-        T_Cu_fft = get_rect_density(a_sub_x, a_sub_y, X_fft, Y_fft)
+        T_sub_den = get_rect_density(a_sub_x, a_sub_y, X_den, Y_den)
+        T_sub_fft = get_rect_density(a_sub_x, a_sub_y, X_fft, Y_fft)
         
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
             Ux_pts, Uy_pts = get_glassy_field_continuous(vis_top[:,0], vis_top[:,1], strain_coupling)
             
-            T_MoS2_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
-            T_total = T_Cu_den * T_MoS2_den
+            T_top_den = get_hex_density(a_mos2, X_den - Ux_den, Y_den - Uy_den, theta_deg)
+            T_total = T_sub_den * T_top_den
             
             vis_top[:,0] -= Ux_pts
             vis_top[:,1] -= Uy_pts
             
-            T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_fft_engine = T_Cu_fft * T_MoS2_fft 
+            T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+            T_fft_engine = T_sub_fft * T_top_fft 
             fft_render_mode = "glass"
 
         elif "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
@@ -377,36 +377,36 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             Xr_m90, Yr_m90 = get_reflected_coords(X_den, Y_den, 90.0)
             T_m0_den = get_hex_density(a_mos2, Xr_m0, Yr_m0, theta_deg)
             T_m90_den = get_hex_density(a_mos2, Xr_m90, Yr_m90, theta_deg)
-            T_MoS2_den = T_base_den + weight * T_m0_den + weight * T_m90_den
+            T_top_den_qc = T_base_den + weight * T_m0_den + weight * T_m90_den
             
             Xr_f1, Yr_f1 = get_reflected_coords(X_den, Y_den, theta_deg)
             Xr_f2, Yr_f2 = get_reflected_coords(X_den, Y_den, theta_deg + 30.0)
             T_cu_m1 = get_rect_density(a_sub_x, a_sub_y, Xr_f1, Yr_f1)
             T_cu_m2 = get_rect_density(a_sub_x, a_sub_y, Xr_f2, Yr_f2)
-            T_Cu_den_qc = T_Cu_den + weight * T_cu_m1 + weight * T_cu_m2
+            T_sub_den_qc = T_sub_den + weight * T_cu_m1 + weight * T_cu_m2
             
-            T_total = T_Cu_den_qc * T_MoS2_den
+            T_total = T_sub_den_qc * T_top_den_qc
             
             T_base_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
             Xf_m0, Yf_m0 = get_reflected_coords(X_fft, Y_fft, 0.0)
             Xf_m90, Yf_m90 = get_reflected_coords(X_fft, Y_fft, 90.0)
             T_m0_fft = get_hex_density(a_mos2, Xf_m0, Yf_m0, theta_deg)
             T_m90_fft = get_hex_density(a_mos2, Xf_m90, Yf_m90, theta_deg)
-            T_MoS2_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m90_fft)
+            T_top_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m90_fft)
             
             Xf_f1, Yf_f1 = get_reflected_coords(X_fft, Y_fft, theta_deg)
             Xf_f2, Yf_f2 = get_reflected_coords(X_fft, Y_fft, theta_deg + 30.0)
             T_cu_m1_fft = get_rect_density(a_sub_x, a_sub_y, Xf_f1, Yf_f1)
             T_cu_m2_fft = get_rect_density(a_sub_x, a_sub_y, Xf_f2, Yf_f2)
-            T_Cu_fft_qc = T_Cu_fft + (weight * 6.0 * T_cu_m1_fft) + (weight * 6.0 * T_cu_m2_fft)
+            T_sub_fft_qc = T_sub_fft + (weight * 6.0 * T_cu_m1_fft) + (weight * 6.0 * T_cu_m2_fft)
             
-            T_fft_engine = T_Cu_fft_qc * T_MoS2_fft_qc
+            T_fft_engine = T_sub_fft_qc * T_top_fft_qc
             fft_render_mode = "quasicrystal"
 
         else:
-            T_total = T_Cu_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-            T_MoS2_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
-            T_fft_engine = T_Cu_fft + T_MoS2_fft
+            T_total = T_sub_den * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+            T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+            T_fft_engine = T_sub_fft + T_top_fft
             fft_render_mode = "rigid"
         
         nx = np.round(vis_top[:, 0] / a_sub_x) * a_sub_x
@@ -437,8 +437,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        T_total = get_hex_density(a_bise, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft_engine = get_hex_density(a_bise, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_sub_den = get_hex_density(a_bise, X_den, Y_den, 0.0)
+        T_sub_fft = get_hex_density(a_bise, X_fft, Y_fft, 0.0)
+        T_top_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        
+        T_total = T_sub_den * T_top_den
+        T_fft_engine = T_sub_fft + T_top_fft
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -456,8 +461,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_mos2_base[:, 0]) < current_fov*1.5) & (np.abs(pts_mos2_base[:, 1]) < current_fov*1.5)
         vis_top = pts_mos2_base[mask_top].dot(R.T)
         
-        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_mos2, X_den, Y_den, theta_deg)
-        T_fft_engine = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        T_sub_den = get_hex_density(a_g, X_den, Y_den, 0.0)
+        T_sub_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0)
+        T_top_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
+        
+        T_total = T_sub_den * T_top_den
+        T_fft_engine = T_sub_fft + T_top_fft
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -476,8 +486,13 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         mask_top = (np.abs(pts_grap_base[:, 0]) < current_fov*1.5) & (np.abs(pts_grap_base[:, 1]) < current_fov*1.5)
         vis_top = pts_grap_base[mask_top].dot(R.T)
         
-        T_total = get_hex_density(a_g, X_den, Y_den, 0.0) * get_hex_density(a_g, X_den, Y_den, theta_deg)
-        T_fft_engine = get_hex_density(a_g, X_fft, Y_fft, 0.0) * get_hex_density(a_g, X_fft, Y_fft, theta_deg)
+        T_sub_den = get_hex_density(a_g, X_den, Y_den, 0.0)
+        T_sub_fft = get_hex_density(a_g, X_fft, Y_fft, 0.0)
+        T_top_den = get_hex_density(a_g, X_den, Y_den, theta_deg)
+        T_top_fft = get_hex_density(a_g, X_fft, Y_fft, theta_deg)
+        
+        T_total = T_sub_den * T_top_den
+        T_fft_engine = T_sub_fft + T_top_fft
         
         dist_co, dist_ho, dist_br = calculate_hex_registry_distances(vis_top, V_sub, invV_sub)
         score_co, score_ho, score_br = np.exp(-(dist_co/decay_L)**2), np.exp(-(dist_ho/(decay_L*1.3))**2), np.exp(-(dist_br/(decay_L*0.8))**2)
@@ -748,16 +763,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     q_min, q_max_fft = q_freq[0], q_freq[-1]
     
     if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and fft_render_mode == "glass":
-        STO_centered = (T_STO_fft - np.mean(T_STO_fft)) * window_2d
-        MoS2_centered = (T_MoS2_fft - np.mean(T_MoS2_fft)) * window_2d
+        sub_centered = (T_sub_fft - np.mean(T_sub_fft)) * window_2d
+        top_centered = (T_top_fft - np.mean(T_top_fft)) * window_2d
         
-        int_STO = np.abs(np.fft.fftshift(np.fft.fft2(STO_centered)))**2
-        int_MoS2 = np.abs(np.fft.fftshift(np.fft.fft2(MoS2_centered)))**2
+        int_sub = np.abs(np.fft.fftshift(np.fft.fft2(sub_centered)))**2
+        int_top = np.abs(np.fft.fftshift(np.fft.fft2(top_centered)))**2
         
         blur_radius = 0.5 + strain_coupling * 4.0
-        int_MoS2 = ndimage.gaussian_filter(int_MoS2, sigma=blur_radius)
+        int_top = ndimage.gaussian_filter(int_top, sigma=blur_radius)
         
-        intensity = int_STO + (int_MoS2 * 3.0) + 1e-10
+        intensity = int_sub + (int_top * 3.0) + 1e-10
 
     else:
         T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
