@@ -202,7 +202,7 @@ def get_glassy_field_continuous(X, Y, coupling):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
+def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, fft_scale, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
     pts_sq_base, pts_rect_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
 
     show_fs_panel = ('FeSe' in system_mode)
@@ -221,25 +221,19 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # PERMANENT GRIDSPEC LAYOUT: Dedicated colorbar slots (cax) lock Panel 1, 2, 3 to equal width
+    # ESTABLISHED LAYOUT SOLUTION: GridSpec spacing with dedicated colorbar channels prevents plot size distortion
     if show_fs_panel:
-        gs = fig.add_gridspec(2, 6, width_ratios=[1, 0.05, 1, 0.05, 1, 0.05], height_ratios=[1, 1.8], wspace=0.15, hspace=0.35, left=0.06, right=0.92, bottom=0.05, top=0.95)
-        ax1  = fig.add_subplot(gs[0, 0])
-        cax1 = fig.add_subplot(gs[0, 1])
-        ax2  = fig.add_subplot(gs[0, 2])
-        cax2 = fig.add_subplot(gs[0, 3])
-        ax3  = fig.add_subplot(gs[0, 4])
-        cax3 = fig.add_subplot(gs[0, 5])
-        ax4  = fig.add_subplot(gs[1, :]) 
+        gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.88, bottom=0.05, top=0.95)
+        ax1 = fig.add_subplot(gs[0, 0])
+        ax2 = fig.add_subplot(gs[0, 2])
+        ax3 = fig.add_subplot(gs[0, 4])
+        ax4 = fig.add_subplot(gs[1, :]) 
         axes = [ax1, ax2, ax3, ax4]
     else:
-        gs = fig.add_gridspec(1, 6, width_ratios=[1, 0.05, 1, 0.05, 1, 0.05], wspace=0.15, left=0.06, right=0.92, bottom=0.12, top=0.88)
-        ax1  = fig.add_subplot(gs[0, 0])
-        cax1 = fig.add_subplot(gs[0, 1])
-        ax2  = fig.add_subplot(gs[0, 2])
-        cax2 = fig.add_subplot(gs[0, 3])
-        ax3  = fig.add_subplot(gs[0, 4])
-        cax3 = fig.add_subplot(gs[0, 5])
+        gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.88, bottom=0.1, top=0.88)
+        ax1 = fig.add_subplot(gs[0])
+        ax2 = fig.add_subplot(gs[2])
+        ax3 = fig.add_subplot(gs[4])
         axes = [ax1, ax2, ax3]
         ax4 = None
     
@@ -247,9 +241,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
-    
-    # Panel 1 has no visible colorbar, so hide cax1 while keeping its width reserved
-    cax1.axis('off')
     
     current_fov = base_grid * zoom_factor
     th = np.radians(theta_deg)
@@ -512,13 +503,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_g, theta_deg)
 
     # ------------------------------------------
-    # EXACT CONTINUOUS ATOMIC STM TOPOGRAPHY (BENCHMARK)
+    # EXACT CONTINUOUS ATOMIC STM TOPOGRAPHY
     # ------------------------------------------
     sigma_atom = 1.0
     xi_stack = 0.6
     A_M = 1.1
 
-    # Unwindowed atomic modulation based on local stacking distance
     A_i = 1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))
 
     r_cut = 3.5 * sigma_atom
@@ -526,7 +516,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
     Z_stm_exact = np.zeros((N_den, N_den))
 
-    # Fast sub-grid continuous Gaussian superposition
     for i in range(len(vis_top)):
         ax_pos, ay_pos = vis_top[i, 0], vis_top[i, 1]
         
@@ -667,7 +656,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(Z_stm_exact, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Registry-Modulated STM Topography\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, cax=cax2)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Tunneling Density (a.u.)', color='white')
         
@@ -683,7 +672,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, cax=cax2)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -693,7 +682,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vmax = np.percentile(g_map, 100 - den_contrast)
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, cax=cax2)
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -708,7 +697,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
     
     if panel3_mode == "FFT of STM Topography (Panel 2)":
-        # Subtract mean and apply 2D Hanning window to the centered grid
         Z_stm_centered = Z_stm_exact - np.mean(Z_stm_exact)
         
         w_1d = np.hanning(N_den)
@@ -721,8 +709,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
         q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-        # Linear scale [0, max] to prevent oversaturation and render pinpoint Moiré spots
-        vmax_fft = np.max(intensity_stm)
+        # User-controlled linear scale max to reveal faint Moiré spots without oversaturating
+        vmax_fft = np.max(intensity_stm) * (fft_scale / 100.0)
         im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
                          origin='lower', cmap='afmhot', 
                          norm=Normalize(vmin=0, vmax=vmax_fft))
@@ -735,7 +723,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax3.set_title(f"FFT Amplitude of STM Topography\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
         ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
         
-        cbar3 = fig.colorbar(im3, cax=cax3)
+        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar3.ax.tick_params(colors='white')
         cbar3.set_label('FFT Amplitude (a.u.)', color='white')
         
@@ -743,7 +731,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, alpha=0.5, label=f'{lbl1_short} Peaks'),
             mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, alpha=0.5, label=f'{lbl2_short} Peaks')
         ]
-        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+        # Placed inside ax3 to avoid collision with colorbar
+        ax3.legend(handles=legend_elements_3, loc='upper left', fontsize=8, framealpha=0.7)
 
     else:
         q_min, q_max_fft = q_freq[0], q_freq[-1]
@@ -820,7 +809,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax3.set_ylim(-q_max, q_max)
         ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
         ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
-        cbar3 = fig.colorbar(im3, cax=cax3)
+        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar3.ax.tick_params(colors='white')
         cbar3.set_label('Scattering Intensity (a.u.)', color='white')
 
@@ -853,7 +842,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'Cu {theta_deg+30}° Replica')
             ])
 
-        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+        ax3.legend(handles=legend_elements_3, loc='upper left', fontsize=8, framealpha=0.7)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
@@ -1007,6 +996,7 @@ with col2:
     mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Kinematic Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
     den_cmap = st.selectbox("Panel 2 Color:", ['magma', 'viridis', 'plasma', 'cividis', 'gray', 'bone', 'coolwarm', 'afmhot'])
     panel3_mode = st.radio("Panel 3 Mode:", ["Scattering (Simulated LEED)", "FFT of STM Topography (Panel 2)"])
+    fft_scale = st.slider("FFT Intensity Scale (% Max):", 0.1, 100.0, 10.0, 0.5, help="Lower value enhances weak Moiré FFT spots")
 
 with col3:
     max_theta = 60.0 if 'Hex-on-Hex' in system_mode else 90.0
@@ -1086,7 +1076,7 @@ dashboard_placeholder = st.empty()
 
 with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
     with dashboard_placeholder.container():
-        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False)
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, fft_scale, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False)
         st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -1107,7 +1097,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     for ang in range(max_t_int + 1):
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
-        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=True)
+        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, fft_scale, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
