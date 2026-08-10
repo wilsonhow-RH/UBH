@@ -221,7 +221,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # GridSpec with dedicated right margin (right=0.82) allows colorbars and legends to sit outside without plot area distortion
     if show_fs_panel:
         gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.82, bottom=0.05, top=0.95)
         ax1 = fig.add_subplot(gs[0, 0])
@@ -736,8 +735,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, alpha=0.5, label=f'{lbl1_short} Peaks'),
             mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, alpha=0.5, label=f'{lbl2_short} Peaks')
         ]
-        # LEGEND FIX: Anchored outside the plot area to the right of the colorbar so it never blocks the FFT peaks
-        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.30, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+        # LEGEND FIX: Anchored flush against the right border of the FFT plot frame
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     else:
         q_min, q_max_fft = q_freq[0], q_freq[-1]
@@ -847,7 +846,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'Cu {theta_deg+30}° Replica')
             ])
 
-        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.30, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.02, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
