@@ -221,18 +221,25 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
+    # PERMANENT GRIDSPEC LAYOUT: Dedicated colorbar slots (cax) lock Panel 1, 2, 3 to equal width
     if show_fs_panel:
-        gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.88, bottom=0.05, top=0.95)
-        ax1 = fig.add_subplot(gs[0, 0])
-        ax2 = fig.add_subplot(gs[0, 2])
-        ax3 = fig.add_subplot(gs[0, 4])
-        ax4 = fig.add_subplot(gs[1, :]) 
+        gs = fig.add_gridspec(2, 6, width_ratios=[1, 0.05, 1, 0.05, 1, 0.05], height_ratios=[1, 1.8], wspace=0.15, hspace=0.35, left=0.06, right=0.92, bottom=0.05, top=0.95)
+        ax1  = fig.add_subplot(gs[0, 0])
+        cax1 = fig.add_subplot(gs[0, 1])
+        ax2  = fig.add_subplot(gs[0, 2])
+        cax2 = fig.add_subplot(gs[0, 3])
+        ax3  = fig.add_subplot(gs[0, 4])
+        cax3 = fig.add_subplot(gs[0, 5])
+        ax4  = fig.add_subplot(gs[1, :]) 
         axes = [ax1, ax2, ax3, ax4]
     else:
-        gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.88, bottom=0.1, top=0.88)
-        ax1 = fig.add_subplot(gs[0])
-        ax2 = fig.add_subplot(gs[2])
-        ax3 = fig.add_subplot(gs[4])
+        gs = fig.add_gridspec(1, 6, width_ratios=[1, 0.05, 1, 0.05, 1, 0.05], wspace=0.15, left=0.06, right=0.92, bottom=0.12, top=0.88)
+        ax1  = fig.add_subplot(gs[0, 0])
+        cax1 = fig.add_subplot(gs[0, 1])
+        ax2  = fig.add_subplot(gs[0, 2])
+        cax2 = fig.add_subplot(gs[0, 3])
+        ax3  = fig.add_subplot(gs[0, 4])
+        cax3 = fig.add_subplot(gs[0, 5])
         axes = [ax1, ax2, ax3]
         ax4 = None
     
@@ -240,6 +247,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax.set_facecolor('#1a1a1a')
         ax.tick_params(colors='white')
         ax.set_aspect('equal')
+    
+    # Panel 1 has no visible colorbar, so hide cax1 while keeping its width reserved
+    cax1.axis('off')
     
     current_fov = base_grid * zoom_factor
     th = np.radians(theta_deg)
@@ -255,9 +265,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # VARIABLE STANDARDIZATION & DATA ROUTING
     # ------------------------------------------
     fft_render_mode = "rigid"
-    T_sub_fft = None
-    T_top_fft = None
-    T_fft_engine = None
     layer2_Cq = 0.01  
     
     if 'Hex-on-Square' in system_mode:
@@ -511,20 +518,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     xi_stack = 0.6
     A_M = 1.1
 
-    h_x = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 0] / current_fov)
-    h_y = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 1] / current_fov)
-    window_pts = h_x * h_y
-
-    A_i = (1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))) * window_pts
+    # Unwindowed atomic modulation based on local stacking distance
+    A_i = 1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))
 
     r_cut = 3.5 * sigma_atom
     dx = (2 * current_fov) / N_den
 
     Z_stm_exact = np.zeros((N_den, N_den))
 
+    # Fast sub-grid continuous Gaussian superposition
     for i in range(len(vis_top)):
         ax_pos, ay_pos = vis_top[i, 0], vis_top[i, 1]
         
+        if abs(ax_pos) > current_fov + r_cut or abs(ay_pos) > current_fov + r_cut:
+            continue
+            
         ix_min = max(0, int((ax_pos - r_cut + current_fov) / dx))
         ix_max = min(N_den, int((ax_pos + r_cut + current_fov) / dx) + 1)
         iy_min = max(0, int((ay_pos - r_cut + current_fov) / dx))
@@ -659,7 +667,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(Z_stm_exact, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Registry-Modulated STM Topography\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, cax=cax2)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Tunneling Density (a.u.)', color='white')
         
@@ -675,7 +683,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, cax=cax2)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
 
@@ -685,7 +693,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vmax = np.percentile(g_map, 100 - den_contrast)
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar2 = fig.colorbar(im2, cax=cax2)
         cbar2.ax.tick_params(colors='white')
         cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
         
@@ -700,14 +708,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
     
     if panel3_mode == "FFT of STM Topography (Panel 2)":
+        # Subtract mean and apply 2D Hanning window to the centered grid
         Z_stm_centered = Z_stm_exact - np.mean(Z_stm_exact)
-        fft_stm = np.fft.fftshift(np.fft.fft2(Z_stm_centered))
+        
+        w_1d = np.hanning(N_den)
+        w_2d = w_1d[:, np.newaxis] * w_1d[np.newaxis, :]
+        Z_stm_windowed = Z_stm_centered * w_2d
+        
+        fft_stm = np.fft.fftshift(np.fft.fft2(Z_stm_windowed))
         intensity_stm = np.abs(fft_stm)
         
         q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
         q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-        vmax_fft = np.percentile(intensity_stm, 99.8)
+        # Linear scale [0, max] to prevent oversaturation and render pinpoint Moiré spots
+        vmax_fft = np.max(intensity_stm)
         im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
                          origin='lower', cmap='afmhot', 
                          norm=Normalize(vmin=0, vmax=vmax_fft))
@@ -720,7 +735,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax3.set_title(f"FFT Amplitude of STM Topography\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
         ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
         
-        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar3 = fig.colorbar(im3, cax=cax3)
         cbar3.ax.tick_params(colors='white')
         cbar3.set_label('FFT Amplitude (a.u.)', color='white')
         
@@ -805,7 +820,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         ax3.set_ylim(-q_max, q_max)
         ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
         ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
-        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar3 = fig.colorbar(im3, cax=cax3)
         cbar3.ax.tick_params(colors='white')
         cbar3.set_label('Scattering Intensity (a.u.)', color='white')
 
