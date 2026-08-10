@@ -221,16 +221,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # ESTABLISHED LAYOUT SOLUTION: GridSpec spacing with dedicated colorbar channels prevents plot size distortion
+    # GridSpec with dedicated right margin (right=0.82) allows colorbars and legends to sit outside without plot area distortion
     if show_fs_panel:
-        gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.88, bottom=0.05, top=0.95)
+        gs = fig.add_gridspec(2, 5, width_ratios=[1, 0.04, 1, 0.14, 1], height_ratios=[1, 2.0], wspace=0.0, hspace=0.35, left=0.08, right=0.82, bottom=0.05, top=0.95)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 2])
         ax3 = fig.add_subplot(gs[0, 4])
         ax4 = fig.add_subplot(gs[1, :]) 
         axes = [ax1, ax2, ax3, ax4]
     else:
-        gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.88, bottom=0.1, top=0.88)
+        gs = fig.add_gridspec(1, 5, width_ratios=[1, 0.04, 1, 0.14, 1], wspace=0.0, left=0.08, right=0.82, bottom=0.1, top=0.88)
         ax1 = fig.add_subplot(gs[0])
         ax2 = fig.add_subplot(gs[2])
         ax3 = fig.add_subplot(gs[4])
@@ -620,6 +620,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             ax1.annotate("", xy=L1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
             ax1.annotate("", xy=L2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
 
+    # PERMANENT SIZE FIX: Attach an invisible dummy colorbar to ax1 so it undergoes identical resize scaling as ax2 and ax3
+    sm1 = cm.ScalarMappable(cmap=mcolors.ListedColormap([(0,0,0,0)]), norm=Normalize(0, 1))
+    sm1._A = []
+    cbar1 = fig.colorbar(sm1, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+    cbar1.ax.set_visible(False)
+
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
     # ------------------------------------------
@@ -709,7 +715,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
         q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-        # User-controlled linear scale max to reveal faint Moiré spots without oversaturating
         vmax_fft = np.max(intensity_stm) * (fft_scale / 100.0)
         im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
                          origin='lower', cmap='afmhot', 
@@ -731,8 +736,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, alpha=0.5, label=f'{lbl1_short} Peaks'),
             mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, alpha=0.5, label=f'{lbl2_short} Peaks')
         ]
-        # Placed inside ax3 to avoid collision with colorbar
-        ax3.legend(handles=legend_elements_3, loc='upper left', fontsize=8, framealpha=0.7)
+        # LEGEND FIX: Anchored outside the plot area to the right of the colorbar so it never blocks the FFT peaks
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.30, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     else:
         q_min, q_max_fft = q_freq[0], q_freq[-1]
@@ -804,7 +809,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             
             ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg}° Replica')
             ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg+30}° Replica')
-            
+
         ax3.set_xlim(-q_max, q_max)
         ax3.set_ylim(-q_max, q_max)
         ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
@@ -842,7 +847,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'Cu {theta_deg+30}° Replica')
             ])
 
-        ax3.legend(handles=legend_elements_3, loc='upper left', fontsize=8, framealpha=0.7)
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.30, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
