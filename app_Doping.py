@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import Normalize
+from matplotlib.colors import LogNorm, Normalize
 import matplotlib.cm as cm
 import matplotlib.lines as mlines
 import matplotlib.tri as mtri
@@ -276,6 +276,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         T_sub_den = get_square_density(a_sub, X_den, Y_den)
         T_sub_fft = get_square_density(a_sub, X_fft, Y_fft)
+        T_top_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
@@ -314,15 +316,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             Xf_m45, Yf_m45 = get_reflected_coords(X_fft, Y_fft, 45.0)
             T_m0_fft = get_hex_density(a_mos2, Xf_m0, Yf_m0, theta_deg)
             T_m45_fft = get_hex_density(a_mos2, Xf_m45, Yf_m45, theta_deg)
-            T_top_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
+            T_top_fft = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m45_fft)
             
             Xf_f1, Yf_f1 = get_reflected_coords(X_fft, Y_fft, theta_deg)
             Xf_f2, Yf_f2 = get_reflected_coords(X_fft, Y_fft, theta_deg + 30.0)
             T_fese_m1_fft = get_square_density(a_sub, Xf_f1, Yf_f1)
             T_fese_m2_fft = get_square_density(a_sub, Xf_f2, Yf_f2)
-            T_sub_fft_qc = T_sub_fft + (weight * 6.0 * T_fese_m1_fft) + (weight * 6.0 * T_fese_m2_fft)
+            T_sub_fft = T_sub_fft + (weight * 6.0 * T_fese_m1_fft) + (weight * 6.0 * T_fese_m2_fft)
             
-            T_fft_engine = T_sub_fft_qc * T_top_fft_qc
+            T_fft_engine = T_sub_fft * T_top_fft
             fft_render_mode = "quasicrystal"
 
         else:
@@ -354,6 +356,8 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         T_sub_den = get_rect_density(a_sub_x, a_sub_y, X_den, Y_den)
         T_sub_fft = get_rect_density(a_sub_x, a_sub_y, X_fft, Y_fft)
+        T_top_den = get_hex_density(a_mos2, X_den, Y_den, theta_deg)
+        T_top_fft = get_hex_density(a_mos2, X_fft, Y_fft, theta_deg)
         
         if "Misfit Dislocation Glass" in interfacial_state and strain_coupling > 0:
             Ux_den, Uy_den = get_glassy_field_continuous(X_den, Y_den, strain_coupling)
@@ -392,15 +396,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             Xf_m90, Yf_m90 = get_reflected_coords(X_fft, Y_fft, 90.0)
             T_m0_fft = get_hex_density(a_mos2, Xf_m0, Yf_m0, theta_deg)
             T_m90_fft = get_hex_density(a_mos2, Xf_m90, Yf_m90, theta_deg)
-            T_top_fft_qc = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m90_fft)
+            T_top_fft = T_base_fft + (weight * 6.0 * T_m0_fft) + (weight * 6.0 * T_m90_fft)
             
             Xf_f1, Yf_f1 = get_reflected_coords(X_fft, Y_fft, theta_deg)
             Xf_f2, Yf_f2 = get_reflected_coords(X_fft, Y_fft, theta_deg + 30.0)
             T_cu_m1_fft = get_rect_density(a_sub_x, a_sub_y, Xf_f1, Yf_f1)
             T_cu_m2_fft = get_rect_density(a_sub_x, a_sub_y, Xf_f2, Yf_f2)
-            T_sub_fft_qc = T_sub_fft + (weight * 6.0 * T_cu_m1_fft) + (weight * 6.0 * T_cu_m2_fft)
+            T_sub_fft = T_sub_fft + (weight * 6.0 * T_cu_m1_fft) + (weight * 6.0 * T_cu_m2_fft)
             
-            T_fft_engine = T_sub_fft_qc * T_top_fft_qc
+            T_fft_engine = T_sub_fft * T_top_fft
             fft_render_mode = "quasicrystal"
 
         else:
@@ -503,25 +507,21 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # EXACT CONTINUOUS ATOMIC STM TOPOGRAPHY (BENCHMARK)
     # ------------------------------------------
-    # Eliminates discrete pixel-rounding discretization artifacts
     sigma_atom = 1.0
     xi_stack = 0.6
     A_M = 1.1
 
-    # Coordinate-evaluated 2D Hanning window applied directly to atoms
     h_x = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 0] / current_fov)
     h_y = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 1] / current_fov)
     window_pts = h_x * h_y
 
     A_i = (1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))) * window_pts
 
-    # Evaluate exact continuous Gaussians for nearby atoms on 2D grid
     r_cut = 3.5 * sigma_atom
     dx = (2 * current_fov) / N_den
 
     Z_stm_exact = np.zeros((N_den, N_den))
 
-    # Fast sub-grid continuous Gaussian superposition
     for i in range(len(vis_top)):
         ax_pos, ay_pos = vis_top[i, 0], vis_top[i, 1]
         
@@ -700,7 +700,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
     
     if panel3_mode == "FFT of STM Topography (Panel 2)":
-        # Calculate FFT of exact continuous topography
         Z_stm_centered = Z_stm_exact - np.mean(Z_stm_exact)
         fft_stm = np.fft.fftshift(np.fft.fft2(Z_stm_centered))
         intensity_stm = np.abs(fft_stm)
@@ -708,7 +707,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
         q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-        # Linear scale (vmin=0) to match colleague's benchmark and eliminate LogNorm noise
         vmax_fft = np.percentile(intensity_stm, 99.8)
         im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
                          origin='lower', cmap='afmhot', 
