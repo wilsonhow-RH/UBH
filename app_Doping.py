@@ -246,7 +246,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     base_size = max(5, 50 / (zoom_factor ** 0.5))
 
-    N_den = 512 # Upgraded to match colleague benchmark for high-res STM FFT
+    N_den = 512 
     x_den = np.linspace(-current_fov, current_fov, N_den)
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
@@ -500,6 +500,37 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         G1_pts, G2_pts = get_hex_G(a_g, 0.0), get_hex_G(a_g, theta_deg)
         BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_g, theta_deg)
 
+
+    # ------------------------------------------
+    # DISCRETE ATOMIC STM TOPOGRAPHY GENERATION
+    # ------------------------------------------
+    # Directly mathematically matches the user's benchmark algorithm
+    sigma_atom = 1.0
+    xi_stack = 0.6
+    A_M = 1.1
+    dx = (2 * current_fov) / N_den
+    
+    # Calculate registry-modulated amplitude for each top-layer atom
+    A_i = 1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))
+    
+    # Map spatial coordinates to grid pixel indices
+    px = np.round((vis_top[:, 0] + current_fov) / dx).astype(int)
+    py = np.round((vis_top[:, 1] + current_fov) / dx).astype(int)
+    
+    in_bounds = (px >= 0) & (px < N_den) & (py >= 0) & (py < N_den)
+    px = px[in_bounds]
+    py = py[in_bounds]
+    A_i = A_i[in_bounds]
+    
+    # Generate the pristine point-source grid
+    Z_stm = np.zeros((N_den, N_den))
+    np.add.at(Z_stm, (py, px), A_i)
+    
+    # Apply exact Gaussian orbital broadening to match the colleague's analytical sum
+    sigma_pixel = sigma_atom / dx
+    Z_stm = ndimage.gaussian_filter(Z_stm, sigma=sigma_pixel, mode='constant', cval=0.0)
+
+
     # ------------------------------------------
     # SHARED MOIRÉ EXTRACTION (RECIPROCAL -> REAL SPACE)
     # ------------------------------------------
@@ -683,6 +714,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
     # ------------------------------------------
+    # Using continuous density for PDE relaxation math
     T_norm = (T_total - np.min(T_total)) / (np.max(T_total) - np.min(T_total) + 1e-10)
     Z_0 = user_zmin + T_norm * (user_zmax - user_zmin) 
     
@@ -713,16 +745,15 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 2: MIDDLE PANEL ROUTING
     # ------------------------------------------
-    if mid_panel_mode == 'Geometry (Density)':
-        T_enhanced = T_total ** 2.5 
-        vmin = np.percentile(T_enhanced, den_contrast)
-        vmax = np.percentile(T_enhanced, 100 - den_contrast)
+    if mid_panel_mode == 'Geometry (Kinematic Density)':
+        vmin = np.percentile(Z_stm, den_contrast)
+        vmax = np.percentile(Z_stm, 100 - den_contrast)
         
-        im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
-        ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
+        im2 = ax2.imshow(Z_stm, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
+        ax2.set_title(f"Registry-Modulated STM Topography\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
         cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar2.ax.tick_params(colors='white')
-        cbar2.set_label('Relative Interfacial Density', color='white')
+        cbar2.set_label('Tunneling Density (a.u.)', color='white')
         
     elif mid_panel_mode == 'Local Doping (Δn)':
         Z_meters = Z_map * 1e-10
@@ -763,22 +794,23 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Cu(110)' if 'Cu' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene')))
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
     
+    q_min, q_max_fft = q_freq[0], q_freq[-1]
+    
     if panel3_mode == "FFT of STM Topography (Panel 2)":
-        # Calculate the 2D Fast Fourier Transform of the real-space STM topography proxy
-        T_stm = T_total ** 2.5
-        T_stm_centered = T_stm - np.mean(T_stm)
+        # Calculate the 2D Fast Fourier Transform of the true discrete atomic STM topography
+        Z_stm_centered = Z_stm - np.mean(Z_stm)
         
         # Apply 2D Hanning window to suppress edge artifacts / spectral leakage
         window_2d_den = np.hanning(N_den)[:, np.newaxis] * np.hanning(N_den)[np.newaxis, :]
-        fft_stm = np.fft.fftshift(np.fft.fft2(T_stm_centered * window_2d_den))
+        fft_stm = np.fft.fftshift(np.fft.fft2(Z_stm_centered * window_2d_den))
         intensity_stm = np.abs(fft_stm)
         
         # Generate exact corresponding reciprocal space frequencies
-        dx = (2 * current_fov) / N_den
-        q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
+        dx_stm = (2 * current_fov) / N_den
+        q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx_stm)) * 2 * np.pi
         q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-        # Render the FFT amplitude map (matches colleague's copper/afmhot palette)
+        # Render the FFT amplitude map (matches benchmark's afmhot palette)
         im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
                          origin='lower', cmap='afmhot', 
                          norm=LogNorm(vmin=np.max(intensity_stm)*1e-4, vmax=np.max(intensity_stm)))
@@ -804,8 +836,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
 
     else:
         # Existing analytical scattering (Simulated LEED) logic
-        q_min, q_max_fft = q_freq[0], q_freq[-1]
-        
         if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and fft_render_mode == "glass":
             sub_centered = (T_sub_fft - np.mean(T_sub_fft)) * window_2d
             top_centered = (T_top_fft - np.mean(T_top_fft)) * window_2d
@@ -1079,7 +1109,7 @@ with col1:
     boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
 with col2:
-    mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
+    mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Kinematic Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
     den_cmap = st.selectbox("Panel 2 Color:", ['magma', 'viridis', 'plasma', 'cividis', 'gray', 'bone', 'coolwarm', 'afmhot'])
     panel3_mode = st.radio("Panel 3 Mode:", ["Scattering (Simulated LEED)", "FFT of STM Topography (Panel 2)"])
 
