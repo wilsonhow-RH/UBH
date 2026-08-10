@@ -2,7 +2,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import LogNorm, Normalize
+from matplotlib.colors import Normalize
 import matplotlib.cm as cm
 import matplotlib.lines as mlines
 import matplotlib.tri as mtri
@@ -202,7 +202,7 @@ def get_glassy_field_continuous(X, Y, coupling):
 # ==========================================
 # 3. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
-def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
+def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False):
     pts_sq_base, pts_rect_base, pts_mos2_base, pts_bise_base, pts_grap_base, V_bise, invV_bise, V_g, invV_g, X_fft, Y_fft, q_freq, window_2d = cached_data
 
     show_fs_panel = ('FeSe' in system_mode)
@@ -246,7 +246,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     R = np.array([[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]])
     base_size = max(5, 50 / (zoom_factor ** 0.5))
 
-    N_den = 256
+    N_den = 512 
     x_den = np.linspace(-current_fov, current_fov, N_den)
     y_den = np.linspace(-current_fov, current_fov, N_den)
     X_den, Y_den = np.meshgrid(x_den, y_den)
@@ -501,6 +501,46 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         BZ1_pts, BZ2_pts = get_hex_bz(a_g, 0.0), get_hex_bz(a_g, theta_deg)
 
     # ------------------------------------------
+    # EXACT CONTINUOUS ATOMIC STM TOPOGRAPHY (BENCHMARK)
+    # ------------------------------------------
+    # Eliminates discrete pixel-rounding discretization artifacts
+    sigma_atom = 1.0
+    xi_stack = 0.6
+    A_M = 1.1
+
+    # Coordinate-evaluated 2D Hanning window applied directly to atoms
+    h_x = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 0] / current_fov)
+    h_y = 0.5 + 0.5 * np.cos(np.pi * vis_top[:, 1] / current_fov)
+    window_pts = h_x * h_y
+
+    A_i = (1.0 + A_M * np.exp(-(dist_co**2) / (2 * xi_stack**2))) * window_pts
+
+    # Evaluate exact continuous Gaussians for nearby atoms on 2D grid
+    r_cut = 3.5 * sigma_atom
+    dx = (2 * current_fov) / N_den
+
+    Z_stm_exact = np.zeros((N_den, N_den))
+
+    # Fast sub-grid continuous Gaussian superposition
+    for i in range(len(vis_top)):
+        ax_pos, ay_pos = vis_top[i, 0], vis_top[i, 1]
+        
+        ix_min = max(0, int((ax_pos - r_cut + current_fov) / dx))
+        ix_max = min(N_den, int((ax_pos + r_cut + current_fov) / dx) + 1)
+        iy_min = max(0, int((ay_pos - r_cut + current_fov) / dx))
+        iy_max = min(N_den, int((ay_pos + r_cut + current_fov) / dx) + 1)
+        
+        if ix_min >= ix_max or iy_min >= iy_max:
+            continue
+            
+        sub_x = x_den[ix_min:ix_max]
+        sub_y = y_den[iy_min:iy_max]
+        sub_X, sub_Y = np.meshgrid(sub_x, sub_y)
+        
+        dist2 = (sub_X - ax_pos)**2 + (sub_Y - ay_pos)**2
+        Z_stm_exact[iy_min:iy_max, ix_min:ix_max] += A_i[i] * np.exp(-dist2 / (2 * sigma_atom**2))
+
+    # ------------------------------------------
     # SHARED MOIRÉ EXTRACTION (RECIPROCAL -> REAL SPACE)
     # ------------------------------------------
     g1_A, g1_B, g2_A, g2_B = None, None, None, None
@@ -523,33 +563,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 L2 = L_mat[:, 1]
         except Exception:
             pass
-
-    # ------------------------------------------
-    # CONDITIONAL LEGEND COVERAGE
-    # ------------------------------------------
-    if boundary_mode != 'None':
-        fwhm_factor = 2 * np.sqrt(np.log(2))
-        w_co = decay_L * fwhm_factor
-        w_ho = decay_L * 1.3 * fwhm_factor
-        w_br = decay_L * 0.8 * fwhm_factor
-
-        strict_mask = (np.abs(vis_top[:, 0]) <= current_fov) & (np.abs(vis_top[:, 1]) <= current_fov)
-        score_co_strict = score_co[strict_mask]
-        score_ho_strict = score_ho[strict_mask]
-        score_br_strict = score_br[strict_mask]
-
-        n_total = max(1, len(score_co_strict))
-        cov_co = np.sum(score_co_strict >= 0.5) / n_total * 100
-        cov_ho = np.sum(score_ho_strict >= 0.5) / n_total * 100
-        cov_br = np.sum(score_br_strict >= 0.5) / n_total * 100
-
-        lbl_co = f'Coincident (W: {w_co:.1f}Å, Cov: {cov_co:.1f}%)'
-        lbl_ho = f'Hollow (W: {w_ho:.1f}Å, Cov: {cov_ho:.1f}%)'
-        lbl_br = f'Bridge (W: {w_br:.1f}Å, Cov: {cov_br:.1f}%)'
-    else:
-        lbl_co = 'Coincident'
-        lbl_ho = 'Hollow'
-        lbl_br = 'Bridge'
 
     # ------------------------------------------
     # PANEL 1: REGISTRY DOMAINS
@@ -601,55 +614,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
                 c_br[:, 0], c_br[:, 1], c_br[:, 2], c_br[:, 3] = 0.2, 0.8, 0.2, score_br[mask_br]
                 ax1.scatter(vis_top[mask_br, 0], vis_top[mask_br, 1], s=base_size * score_br[mask_br], c=c_br, edgecolors='none')
 
-        if boundary_mode != "None":
-            domain_pairs = [(score_co, '#ff6666', show_co_dom), 
-                            (score_ho, '#66b3ff', show_ho_dom), 
-                            (score_br, '#66ff66', show_br_dom)]
-            
-            if boundary_mode == "Microscopic (Atomic)":
-                triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
-                for score, color, is_shown in domain_pairs:
-                    if is_shown: ax1.tricontour(triang, score, levels=[0.5], colors=color, linewidths=1.5, linestyles='solid')
-                    
-            elif boundary_mode == "Mesoscopic (Envelope)":
-                pad_fov = current_fov * 1.2
-                N_pad = int(N_den * 1.2)
-                dx = (pad_fov * 2) / N_pad
-                
-                valid_mask = (np.abs(vis_top[:, 0]) < pad_fov) & (np.abs(vis_top[:, 1]) < pad_fov)
-                vt_pad = vis_top[valid_mask]
-                
-                ix = np.clip(np.round((vt_pad[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
-                iy = np.clip(np.round((vt_pad[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
-                
-                radius = int(np.ceil((a_mos2 * 1.5) / dx))
-                
-                y_fp, x_fp = np.ogrid[-radius:radius+1, -radius:radius+1]
-                circular_footprint = x_fp**2 + y_fp**2 <= radius**2
-                
-                x_pad = np.linspace(-pad_fov, pad_fov, N_pad)
-                y_pad = np.linspace(-pad_fov, pad_fov, N_pad)
-                X_pad, Y_pad = np.meshgrid(x_pad, y_pad)
-                
-                for score, color, is_shown in domain_pairs:
-                    if not is_shown: continue
-                    sc_pad = score[valid_mask]
-                    
-                    if len(sc_pad) == 0: continue
-                    
-                    grid_z = np.zeros((N_pad, N_pad))
-                    np.maximum.at(grid_z, (iy, ix), sc_pad) 
-                    
-                    grid_z_dilated = ndimage.maximum_filter(grid_z, footprint=circular_footprint)
-                    grid_z_meso = ndimage.gaussian_filter(grid_z_dilated, sigma=radius/1.0)
-                    
-                    z_min = np.min(grid_z_meso)
-                    z_max = np.max(grid_z_meso)
-                    
-                    if (z_max - z_min) > 1e-5:
-                        level = z_min + (z_max - z_min) * 0.5
-                        ax1.contour(X_pad, Y_pad, grid_z_meso, levels=[level], colors=color, linewidths=1.5, linestyles='solid')
-
     if L1 is not None and L2 is not None:
         if np.linalg.norm(L1) < current_fov * 10 and np.linalg.norm(L2) < current_fov * 10:
             cell_x = [0, L1[0], L1[0]+L2[0], L2[0], 0]
@@ -658,27 +622,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             ax1.plot(cell_x, cell_y, color='yellow', linestyle='--', linewidth=2.0, alpha=0.9, zorder=5)
             ax1.annotate("", xy=L1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
             ax1.annotate("", xy=L2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
-            
-            mid_L1 = L1 / 2.0
-            mid_L2 = L2 / 2.0
-            
-            ax1.annotate(r"$\mathbf{L}_{M1}$", xy=mid_L1, xytext=(5, 5), textcoords="offset points", color="yellow", fontsize=11, fontweight="bold")
-            ax1.annotate(r"$\mathbf{L}_{M2}$", xy=mid_L2, xytext=(5, 5), textcoords="offset points", color="yellow", fontsize=11, fontweight="bold")
-
-    ax1.set_xlim(-current_fov, current_fov)
-    ax1.set_ylim(-current_fov, current_fov)
-
-    transparent_cmap = mcolors.ListedColormap([(0,0,0,0)])
-    sm = cm.ScalarMappable(cmap=transparent_cmap, norm=Normalize(vmin=0, vmax=1))
-    sm._A = []
-    
-    cbar1 = fig.colorbar(sm, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-    cbar1.ax.set_facecolor('none')  
-    cbar1.outline.set_visible(False)
-    cbar1.ax.tick_params(colors='none') 
-    for spine in cbar1.ax.spines.values():
-        spine.set_visible(False)
-    cbar1.set_ticks([])
 
     # ------------------------------------------
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
@@ -688,11 +631,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     
     if relax_mode == "Rigid Lattices (No Relaxation)":
         Z_map = Z_0.copy()
-        
     elif relax_mode == "Fast Proxy (Algebraic Shift)":
         compression = 0.2 * (w2 - w1)**2 
         Z_map = np.clip(Z_0 - compression, a_min=2.0, a_max=None)
-        
     else:
         Z_map = Z_0.copy()
         lr = 0.05 / (1.0 + k_elastic * 10) 
@@ -704,7 +645,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             F_elastic = k_elastic * laplacian
             F_vdw = -k_vdw * (Z_map - Z_0)
             F_elec = - A_elec / (Z_map**2)
-            
             Z_map = Z_map + lr * (F_elastic + F_vdw + F_elec)
             Z_map = np.clip(Z_map, 1.5, 5.0) 
 
@@ -713,26 +653,23 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     # ------------------------------------------
     # PANEL 2: MIDDLE PANEL ROUTING
     # ------------------------------------------
-    if mid_panel_mode == 'Geometry (Density)':
-        T_enhanced = T_total ** 2.5 
-        vmin = np.percentile(T_enhanced, den_contrast)
-        vmax = np.percentile(T_enhanced, 100 - den_contrast)
+    if mid_panel_mode == 'Geometry (Kinematic Density)':
+        vmin = np.percentile(Z_stm_exact, den_contrast)
+        vmax = np.percentile(Z_stm_exact, 100 - den_contrast)
         
-        im2 = ax2.imshow(T_enhanced, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
-        ax2.set_title(f"Geometry (Kinematic Density)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
+        im2 = ax2.imshow(Z_stm_exact, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
+        ax2.set_title(f"Registry-Modulated STM Topography\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
         cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
         cbar2.ax.tick_params(colors='white')
-        cbar2.set_label('Relative Interfacial Density', color='white')
+        cbar2.set_label('Tunneling Density (a.u.)', color='white')
         
     elif mid_panel_mode == 'Local Doping (Δn)':
         Z_meters = Z_map * 1e-10
         epsilon_0, e_charge = 8.854e-12, 1.602e-19
         delta_W = w2 - w1 if (w2 - w1) != 0 else 1e-6
-        
         C_geom = epsilon_0 / Z_meters
         C_total = (C_geom * layer2_Cq) / (C_geom + layer2_Cq)
         delta_n = (C_total * delta_W) / e_charge / 1e4 
-        
         vmin = np.percentile(delta_n, den_contrast)
         vmax = np.percentile(delta_n, 100 - den_contrast)
         
@@ -746,7 +683,6 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         g_map = eph_g0 * np.exp(-(Z_map - user_zmin) / eph_decay)
         vmin = np.percentile(g_map, den_contrast)
         vmax = np.percentile(g_map, 100 - den_contrast)
-
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
         cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
@@ -758,150 +694,153 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax2.set_xlabel(r"Distance ($\AA$)", color='white')
     
     # ------------------------------------------
-    # PANEL 3: LEED FFT
+    # PANEL 3: LEED FFT OR STM FFT ROUTING
     # ------------------------------------------
-    q_min, q_max_fft = q_freq[0], q_freq[-1]
-    
-    if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and fft_render_mode == "glass":
-        sub_centered = (T_sub_fft - np.mean(T_sub_fft)) * window_2d
-        top_centered = (T_top_fft - np.mean(T_top_fft)) * window_2d
-        
-        int_sub = np.abs(np.fft.fftshift(np.fft.fft2(sub_centered)))**2
-        int_top = np.abs(np.fft.fftshift(np.fft.fft2(top_centered)))**2
-        
-        blur_radius = 0.5 + strain_coupling * 4.0
-        int_top = ndimage.gaussian_filter(int_top, sigma=blur_radius)
-        
-        intensity = int_sub + (int_top * 3.0) + 1e-10
-
-    else:
-        T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
-        intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
-        intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
-    
-    im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-4, vmax=np.max(intensity)))
-    
-    if 'Hex-on-Rect' in system_mode:
-        BZ1_pts = get_rect_bz(a_cux, a_cuy, 0.0)
-    
-    ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
-    ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
-    
-    ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
-    ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
-    
-    if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and "Rigid" not in interfacial_state and strain_coupling > 0:
-        G_umklapp = []
-        for g1 in G1_pts:
-            for g2 in G2_pts:
-                G_umklapp.append(g1 + g2)
-                G_umklapp.append(g1 - g2)
-        if G_umklapp:
-            G_umklapp = np.array(G_umklapp)
-            valid_mask = (np.abs(G_umklapp[:, 0]) < q_max) & (np.abs(G_umklapp[:, 1]) < q_max)
-            ax3.scatter(G_umklapp[valid_mask, 0], G_umklapp[valid_mask, 1], color='yellow', s=30, marker='x', alpha=0.7, zorder=4, label='1st Order Umklapp')
-
-    if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-        G2_m0 = get_hex_G(a_mos2, -theta_deg)
-        G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
-        ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 0° Replica')
-        ax3.scatter(G2_m45[:, 0], G2_m45[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 45° Replica')
-        
-        phi1 = np.radians(theta_deg)
-        phi2 = np.radians(theta_deg + 30.0)
-        c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
-        c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
-        
-        G1_m1 = np.array([[g[0]*c1 + g[1]*s1, g[0]*s1 - g[1]*c1] for g in G1_pts])
-        G1_m2 = np.array([[g[0]*c2 + g[1]*s2, g[0]*s2 - g[1]*c2] for g in G1_pts])
-        
-        ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg}° Replica')
-        ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg+30}° Replica')
-
-    elif 'Hex-on-Rect' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-        G2_m0 = get_hex_G(a_mos2, -theta_deg)
-        G2_m90 = get_hex_G(a_mos2, 180.0 - theta_deg)
-        ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 0° Replica')
-        ax3.scatter(G2_m90[:, 0], G2_m90[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 90° Replica')
-        
-        phi1 = np.radians(theta_deg)
-        phi2 = np.radians(theta_deg + 30.0)
-        c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
-        c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
-        
-        G1_m1 = np.array([[g[0]*c1 + g[1]*s1, g[0]*s1 - g[1]*c1] for g in G1_pts])
-        G1_m2 = np.array([[g[0]*c2 + g[1]*s2, g[0]*s2 - g[1]*c2] for g in G1_pts])
-        
-        ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg}° Replica')
-        ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg+30}° Replica')
-        
-    if g1_A is not None and g2_A is not None:
-        for i, (v1, v2) in enumerate([(g1_A, g2_A), (g1_B, g2_B)]):
-            ax3.annotate("", xy=v1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="cyan", lw=1.5))
-            ax3.annotate("", xy=v2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="red", lw=1.5))
-            if np.linalg.norm(v2 - v1) > 1e-5: 
-                ax3.annotate("", xy=v2, xytext=v1, arrowprops=dict(arrowstyle="-|>", color="yellow", lw=1.5, ls="--"))
-                
-                mid_pt = (v1 + v2) / 2
-                q_label = r"$\mathbf{q}_{M1}$" if i == 0 else r"$\mathbf{q}_{M2}$"
-                ax3.annotate(q_label, xy=mid_pt, xytext=(4, 4), textcoords="offset points", color="yellow", fontsize=10)
-        
-    ax3.set_xlim(-q_max, q_max)
-    ax3.set_ylim(-q_max, q_max)
-    ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
-    ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
-    
-    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-    cbar3.ax.tick_params(colors='white')
-    cbar3.set_label('Scattering Intensity (a.u.)', color='white')
-    
-    if view_mode != 'Raw Lattices':
-        legend_elements = []
-        if show_co_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(1.0, 0.2, 0.3), markersize=9, label=lbl_co))
-        if show_ho_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.1, 0.6, 1.0), markersize=9, label=lbl_ho))
-        if show_br_dom:
-            legend_elements.append(mlines.Line2D([0], [0], marker='o', color='w', markerfacecolor=(0.2, 0.8, 0.2), markersize=9, label=lbl_br))
-        
-        if L1 is not None and L2 is not None:
-            legend_elements.append(mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=2.0, label='Moiré Supercell\n' + r'($\mathbf{L}_{M1}, \mathbf{L}_{M2}$)'))
-
-        ax1.legend(handles=legend_elements, loc='upper right', fontsize=9, framealpha=0.8)
-        
     lbl1_short = r'SrTiO$_3$' if 'SrTiO' in label1 else (r'FeSe' if 'FeSe' in label1 else (r'Cu(110)' if 'Cu' in label1 else (r'Bi$_2$Se$_3$' if 'Bi' in label1 else 'Graphene')))
     lbl2_short = r'MoS$_2$' if 'MoS' in label2 else 'Rotated'
-
-    legend_elements_3 = [
-        mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks'),
-        mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks'),
-        mlines.Line2D([0], [0], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short} 1st BZ'),
-        mlines.Line2D([0], [0], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short} 1st BZ'),
-        mlines.Line2D([0], [0], color='cyan', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_1$'),
-        mlines.Line2D([0], [0], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$'),
-        mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
-    ]
     
-    if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and "Rigid" not in interfacial_state and strain_coupling > 0:
-        legend_elements_3.append(mlines.Line2D([0], [0], color='none', marker='x', markeredgecolor='yellow', markersize=8, label='1st Order Umklapp'))
+    if panel3_mode == "FFT of STM Topography (Panel 2)":
+        # Calculate FFT of exact continuous topography
+        Z_stm_centered = Z_stm_exact - np.mean(Z_stm_exact)
+        fft_stm = np.fft.fftshift(np.fft.fft2(Z_stm_centered))
+        intensity_stm = np.abs(fft_stm)
         
-    if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-        legend_elements_3.extend([
-            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='orange', markersize=8, label='MoS$_2$ 0° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='magenta', markersize=8, label='MoS$_2$ 45° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='lime', markersize=8, label=f'FeSe {theta_deg}° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'FeSe {theta_deg+30}° Replica')
-        ])
+        q_freq_stm = np.fft.fftshift(np.fft.fftfreq(N_den, d=dx)) * 2 * np.pi
+        q_min_stm, q_max_stm = q_freq_stm[0], q_freq_stm[-1]
         
-    if 'Hex-on-Rect' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
-        legend_elements_3.extend([
-            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='orange', markersize=8, label='MoS$_2$ 0° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='magenta', markersize=8, label='MoS$_2$ 90° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='lime', markersize=8, label=f'Cu {theta_deg}° Replica'),
-            mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'Cu {theta_deg+30}° Replica')
-        ])
+        # Linear scale (vmin=0) to match colleague's benchmark and eliminate LogNorm noise
+        vmax_fft = np.percentile(intensity_stm, 99.8)
+        im3 = ax3.imshow(intensity_stm, extent=[q_min_stm, q_max_stm, q_min_stm, q_max_stm], 
+                         origin='lower', cmap='afmhot', 
+                         norm=Normalize(vmin=0, vmax=vmax_fft))
+        
+        ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=80, linewidths=1.0, marker='o', zorder=3, alpha=0.5)
+        ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=80, linewidths=1.0, marker='s', zorder=3, alpha=0.5)
+        
+        ax3.set_xlim(-q_max, q_max)
+        ax3.set_ylim(-q_max, q_max)
+        ax3.set_title(f"FFT Amplitude of STM Topography\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
+        ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
+        
+        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar3.ax.tick_params(colors='white')
+        cbar3.set_label('FFT Amplitude (a.u.)', color='white')
+        
+        legend_elements_3 = [
+            mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, alpha=0.5, label=f'{lbl1_short} Peaks'),
+            mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, alpha=0.5, label=f'{lbl2_short} Peaks')
+        ]
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
-    ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+    else:
+        q_min, q_max_fft = q_freq[0], q_freq[-1]
+        
+        if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and fft_render_mode == "glass":
+            sub_centered = (T_sub_fft - np.mean(T_sub_fft)) * window_2d
+            top_centered = (T_top_fft - np.mean(T_top_fft)) * window_2d
+            int_sub = np.abs(np.fft.fftshift(np.fft.fft2(sub_centered)))**2
+            int_top = np.abs(np.fft.fftshift(np.fft.fft2(top_centered)))**2
+            blur_radius = 0.5 + strain_coupling * 4.0
+            int_top = ndimage.gaussian_filter(int_top, sigma=blur_radius)
+            intensity = int_sub + (int_top * 3.0) + 1e-10
+        else:
+            T_centered_windowed = (T_fft_engine - np.mean(T_fft_engine)) * window_2d
+            intensity = np.abs(np.fft.fftshift(np.fft.fft2(T_centered_windowed)))**2 + 1e-10
+            intensity = ndimage.gaussian_filter(intensity, sigma=0.5) 
+        
+        im3 = ax3.imshow(intensity, extent=[q_min, q_max_fft, q_min, q_max_fft], origin='lower', cmap='viridis', norm=LogNorm(vmin=np.max(intensity)*1e-4, vmax=np.max(intensity)))
+        
+        if 'Hex-on-Rect' in system_mode:
+            BZ1_pts = get_rect_bz(a_cux, a_cuy, 0.0)
+        
+        ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
+        ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
+        ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
+        ax3.scatter(G2_pts[:, 0], G2_pts[:, 1], facecolors='none', edgecolors='red', s=120, linewidths=1.5, marker='s', zorder=3)
+        
+        if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and "Rigid" not in interfacial_state and strain_coupling > 0:
+            G_umklapp = []
+            for g1 in G1_pts:
+                for g2 in G2_pts:
+                    G_umklapp.append(g1 + g2)
+                    G_umklapp.append(g1 - g2)
+            if G_umklapp:
+                G_umklapp = np.array(G_umklapp)
+                valid_mask = (np.abs(G_umklapp[:, 0]) < q_max) & (np.abs(G_umklapp[:, 1]) < q_max)
+                ax3.scatter(G_umklapp[valid_mask, 0], G_umklapp[valid_mask, 1], color='yellow', s=30, marker='x', alpha=0.7, zorder=4, label='1st Order Umklapp')
+
+        if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            G2_m0 = get_hex_G(a_mos2, -theta_deg)
+            G2_m45 = get_hex_G(a_mos2, 90.0 - theta_deg)
+            ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 0° Replica')
+            ax3.scatter(G2_m45[:, 0], G2_m45[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 45° Replica')
+            
+            phi1 = np.radians(theta_deg)
+            phi2 = np.radians(theta_deg + 30.0)
+            c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
+            c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
+            
+            G1_m1 = np.array([[g[0]*c1 + g[1]*s1, g[0]*s1 - g[1]*c1] for g in G1_pts])
+            G1_m2 = np.array([[g[0]*c2 + g[1]*s2, g[0]*s2 - g[1]*c2] for g in G1_pts])
+            
+            ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg}° Replica')
+            ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'FeSe {theta_deg+30}° Replica')
+
+        elif 'Hex-on-Rect' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            G2_m0 = get_hex_G(a_mos2, -theta_deg)
+            G2_m90 = get_hex_G(a_mos2, 180.0 - theta_deg)
+            ax3.scatter(G2_m0[:, 0], G2_m0[:, 1], facecolors='none', edgecolors='orange', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 0° Replica')
+            ax3.scatter(G2_m90[:, 0], G2_m90[:, 1], facecolors='none', edgecolors='magenta', s=80, linewidths=1.0, marker='D', zorder=3, alpha=0.8, label='MoS$_2$ 90° Replica')
+            
+            phi1 = np.radians(theta_deg)
+            phi2 = np.radians(theta_deg + 30.0)
+            c1, s1 = np.cos(2*phi1), np.sin(2*phi1)
+            c2, s2 = np.cos(2*phi2), np.sin(2*phi2)
+            
+            G1_m1 = np.array([[g[0]*c1 + g[1]*s1, g[0]*s1 - g[1]*c1] for g in G1_pts])
+            G1_m2 = np.array([[g[0]*c2 + g[1]*s2, g[0]*s2 - g[1]*c2] for g in G1_pts])
+            
+            ax3.scatter(G1_m1[:, 0], G1_m1[:, 1], facecolors='none', edgecolors='lime', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg}° Replica')
+            ax3.scatter(G1_m2[:, 0], G1_m2[:, 1], facecolors='none', edgecolors='green', s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8, label=f'Cu {theta_deg+30}° Replica')
+            
+        ax3.set_xlim(-q_max, q_max)
+        ax3.set_ylim(-q_max, q_max)
+        ax3.set_title(f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹", color='white', fontsize=13)
+        ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
+        cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+        cbar3.ax.tick_params(colors='white')
+        cbar3.set_label('Scattering Intensity (a.u.)', color='white')
+
+        legend_elements_3 = [
+            mlines.Line2D([0], [0], color='none', marker='o', markeredgecolor='cyan', markersize=8, label=f'{lbl1_short} Peaks'),
+            mlines.Line2D([0], [0], color='none', marker='s', markeredgecolor='red', markersize=8, label=f'{lbl2_short} Peaks'),
+            mlines.Line2D([0], [0], color='cyan', linestyle=':', lw=1.5, label=f'{lbl1_short} 1st BZ'),
+            mlines.Line2D([0], [0], color='red', linestyle=':', lw=1.5, label=f'{lbl2_short} 1st BZ'),
+            mlines.Line2D([0], [0], color='cyan', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_1$'),
+            mlines.Line2D([0], [0], color='red', linestyle='-', lw=1.5, label=r'Recip. Vec. $\mathbf{g}_2$'),
+            mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$')
+        ]
+        
+        if ('Hex-on-Square' in system_mode or 'Hex-on-Rect' in system_mode) and "Rigid" not in interfacial_state and strain_coupling > 0:
+            legend_elements_3.append(mlines.Line2D([0], [0], color='none', marker='x', markeredgecolor='yellow', markersize=8, label='1st Order Umklapp'))
+            
+        if 'Hex-on-Square' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            legend_elements_3.extend([
+                mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='orange', markersize=8, label='MoS$_2$ 0° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='magenta', markersize=8, label='MoS$_2$ 45° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='lime', markersize=8, label=f'FeSe {theta_deg}° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'FeSe {theta_deg+30}° Replica')
+            ])
+            
+        if 'Hex-on-Rect' in system_mode and "Dodecagonal Quasicrystal" in interfacial_state and strain_coupling > 0:
+            legend_elements_3.extend([
+                mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='orange', markersize=8, label='MoS$_2$ 0° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='D', markeredgecolor='magenta', markersize=8, label='MoS$_2$ 90° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='lime', markersize=8, label=f'Cu {theta_deg}° Replica'),
+                mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor='green', markersize=8, label=f'Cu {theta_deg+30}° Replica')
+            ])
+
+        ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.05, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
@@ -1052,8 +991,9 @@ with col1:
     boundary_mode = st.selectbox("Domain Boundaries:", ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"])
 
 with col2:
-    mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
-    den_cmap = st.selectbox("Panel 2 Color:", ['magma', 'viridis', 'plasma', 'cividis', 'gray', 'bone', 'coolwarm'])
+    mid_panel_mode = st.radio("Middle Panel Metric:", ["Geometry (Kinematic Density)", "Local Doping (Δn)", "e-ph Coupling (g)"], horizontal=True)
+    den_cmap = st.selectbox("Panel 2 Color:", ['magma', 'viridis', 'plasma', 'cividis', 'gray', 'bone', 'coolwarm', 'afmhot'])
+    panel3_mode = st.radio("Panel 3 Mode:", ["Scattering (Simulated LEED)", "FFT of STM Topography (Panel 2)"])
 
 with col3:
     max_theta = 60.0 if 'Hex-on-Hex' in system_mode else 90.0
@@ -1133,7 +1073,7 @@ dashboard_placeholder = st.empty()
 
 with st.spinner("Re-calculating physics models and rendering panels... Please wait."):
     with dashboard_placeholder.container():
-        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False)
+        fig = create_unified_plot(None, cached_data, system_mode, theta_deg, zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=False)
         st.pyplot(fig)
 
 # --- VIDEO GENERATOR (CINEMATIC TOOLS) ---
@@ -1154,7 +1094,7 @@ if st.button(f"Generate Twist Angle Scan Video (0° to {max_t_int}°)"):
     for ang in range(max_t_int + 1):
         vid_progress.progress(int((ang / max_t_int) * 100), text=f"Rendering frame {ang + 1} of {max_t_int + 1} (Twist: {ang}°)...")
         
-        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=True)
+        fig_frame = create_unified_plot(video_fig, cached_data, system_mode, float(ang), zoom_factor, q_max, k_max, view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap, den_contrast, relax_mode, w1, w2, user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay, interfacial_state, strain_coupling, is_video_frame=True)
         
         fig_frame.canvas.draw()
         img_rgba = np.asarray(fig_frame.canvas.buffer_rgba())
