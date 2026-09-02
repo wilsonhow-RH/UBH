@@ -1,12 +1,3 @@
-You caught a critical omission. When I split the rendering logic to accommodate the linear FFT mode, I accidentally branched the overlay code as well. The Brillouin zone boundaries, reciprocal vectors ($\mathbf{g}_1$, $\mathbf{g}_2$), Moiré vectors ($\mathbf{q}_{M1}$, $\mathbf{q}_{M2}$), and their associated legend entries were left stranded in the "Simulated LEED" branch and never copied over to the "FFT of STM" branch.
-
-I have completely refactored the plotting architecture. **The mathematical overlay engine is now shared globally for Panel 3.**
-
-Regardless of whether you select LEED or STM FFT, the exact same comprehensive reciprocal-space geometry (Brillouin zones, reciprocal and Moiré wavevectors, and all structural/quasicrystalline replicas) will perfectly overlay onto the background matrix, and the legend will dynamically construct to include every single active feature.
-
-Here is the complete, carefully debugged script with all features fully restored:
-
-```python
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
@@ -1137,5 +1128,3 @@ if "video_bytes" in st.session_state:
         file_name=f"twist_scan_{dl_name}.mp4",
         mime="video/mp4"
     )
-
-```
