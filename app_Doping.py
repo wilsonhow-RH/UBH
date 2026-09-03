@@ -211,7 +211,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         if show_fs_panel:
             fig = Figure(figsize=(24, 18), dpi=100)
         else:
-            fig = Figure(figsize=(21, 6.5), dpi=100)
+            fig = Figure(figsize=(22, 6.8), dpi=100)
         FigureCanvasAgg(fig) 
     else:
         fig.clf()
@@ -221,18 +221,16 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     if is_video_frame:
         fig.text(0.02, 0.96, f"Twist Angle: {theta_deg:.1f}°", color='#ffcc00', fontsize=14, fontweight='bold', va='top', ha='left')
     
-    # ESTABLISHED LAYOUT FIX: Pure 3-column setup. 
-    # wspace=0.35 creates massive safety gaps between plots so colorbars cannot overlap.
-    # right=0.85 reserves a large empty right-hand margin strictly for the legend.
+    # 3-column setup maximizing panel width while keeping comfortable colorbar and legend spacing
     if show_fs_panel:
-        gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.8], wspace=0.35, hspace=0.35, left=0.05, right=0.85, bottom=0.05, top=0.95)
+        gs = fig.add_gridspec(2, 3, height_ratios=[1, 1.8], wspace=0.22, hspace=0.32, left=0.04, right=0.86, bottom=0.05, top=0.96)
         ax1 = fig.add_subplot(gs[0, 0])
         ax2 = fig.add_subplot(gs[0, 1])
         ax3 = fig.add_subplot(gs[0, 2])
         ax4 = fig.add_subplot(gs[1, :]) 
         axes = [ax1, ax2, ax3, ax4]
     else:
-        gs = fig.add_gridspec(1, 3, wspace=0.35, left=0.05, right=0.85, bottom=0.1, top=0.88)
+        gs = fig.add_gridspec(1, 3, wspace=0.22, left=0.04, right=0.86, bottom=0.10, top=0.90)
         ax1 = fig.add_subplot(gs[0])
         ax2 = fig.add_subplot(gs[1])
         ax3 = fig.add_subplot(gs[2])
@@ -622,10 +620,10 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
             ax1.annotate("", xy=L1, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
             ax1.annotate("", xy=L2, xytext=(0, 0), arrowprops=dict(arrowstyle="-|>", color="yellow", lw=2.5), zorder=6)
 
-    # PERMANENT SIZE FIX: Attach an invisible dummy colorbar to ax1 so it undergoes identical resize scaling as ax2 and ax3
+    # Invisible dummy colorbar matching the exact geometry of cbar2 and cbar3
     sm1 = cm.ScalarMappable(cmap=mcolors.ListedColormap([(0,0,0,0)]), norm=Normalize(0, 1))
     sm1._A = []
-    cbar1 = fig.colorbar(sm1, ax=ax1, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
+    cbar1 = fig.colorbar(sm1, ax=ax1, shrink=0.36, pad=0.02, aspect=18, anchor=(0.0, 0.0))
     cbar1.ax.set_visible(False)
 
     # ------------------------------------------
@@ -664,9 +662,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(Z_stm_exact, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Registry-Modulated STM Topography\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='white', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-        cbar2.ax.tick_params(colors='white')
-        cbar2.set_label('Tunneling Density (a.u.)', color='white')
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.36, pad=0.02, aspect=18, anchor=(0.0, 0.0))
+        cbar2.ax.tick_params(colors='white', labelsize=8)
+        cbar2.set_label('Tunneling Density (a.u.)', color='white', fontsize=9)
         
     elif mid_panel_mode == 'Local Doping (Δn)':
         Z_meters = Z_map * 1e-10
@@ -680,9 +678,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         
         im2 = ax2.imshow(delta_n, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Local Doping in Layer 2: $\Delta n$ (cm$^{{-2}}$)\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#ffcc00', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-        cbar2.ax.tick_params(colors='white')
-        cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white')
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.36, pad=0.02, aspect=18, anchor=(0.0, 0.0))
+        cbar2.ax.tick_params(colors='white', labelsize=8)
+        cbar2.set_label('Carrier Density $\Delta n$ (cm$^{-2}$)', color='white', fontsize=9)
 
     elif mid_panel_mode == 'e-ph Coupling (g)':
         g_map = eph_g0 * np.exp(-(Z_map - user_zmin) / eph_decay)
@@ -690,9 +688,9 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         vmax = np.percentile(g_map, 100 - den_contrast)
         im2 = ax2.imshow(g_map, extent=[-current_fov, current_fov, -current_fov, current_fov], origin='lower', cmap=den_cmap, vmin=vmin, vmax=vmax)
         ax2.set_title(f"Evanescent e-ph Coupling: $g(\mathbf{{r}})$\nRelaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]", color='#00ffcc', fontsize=13)
-        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-        cbar2.ax.tick_params(colors='white')
-        cbar2.set_label('Coupling Strength $g$ (meV)', color='white')
+        cbar2 = fig.colorbar(im2, ax=ax2, shrink=0.36, pad=0.02, aspect=18, anchor=(0.0, 0.0))
+        cbar2.ax.tick_params(colors='white', labelsize=8)
+        cbar2.set_label('Coupling Strength $g$ (meV)', color='white', fontsize=9)
         
     ax2.set_xlim(-current_fov, current_fov)
     ax2.set_ylim(-current_fov, current_fov)
@@ -745,7 +743,7 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
         title_3 = f"Scattering (Simulated LEED)\nTwist: {theta_deg}" + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹"
         cbar_lbl = 'Scattering Intensity (a.u.)'
 
-    # --- SHARED OVERLAYS FOR PANEL 3 ---
+    # --- COMPLETE REPRODUCIBLE OVERLAYS FOR PANEL 3 ---
     ax3.plot(BZ1_pts[:, 0], BZ1_pts[:, 1], color='cyan', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     ax3.plot(BZ2_pts[:, 0], BZ2_pts[:, 1], color='red', linestyle=':', linewidth=1.5, alpha=0.8, zorder=2)
     ax3.scatter(G1_pts[:, 0], G1_pts[:, 1], facecolors='none', edgecolors='cyan', s=120, linewidths=1.5, marker='o', zorder=3)
@@ -836,12 +834,12 @@ def create_unified_plot(fig, cached_data, system_mode, theta_deg, zoom_factor, q
     ax3.set_title(title_3, color='white', fontsize=13)
     ax3.set_xlabel(r"$q_x$ ($\AA^{-1}$)", color='white')
     
-    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.45, pad=0.04, anchor=(0.0, 0.0))
-    cbar3.ax.tick_params(colors='white')
-    cbar3.set_label(cbar_lbl, color='white')
+    cbar3 = fig.colorbar(im3, ax=ax3, shrink=0.36, pad=0.02, aspect=18, anchor=(0.0, 0.0))
+    cbar3.ax.tick_params(colors='white', labelsize=8)
+    cbar3.set_label(cbar_lbl, color='white', fontsize=9)
 
-    # LEGEND PLACEMENT FIX: Anchored outside the plot area to the far right.
-    ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.25, 1.0), fontsize=8, framealpha=0.8, ncol=1, labelspacing=0.8)
+    # Snug legend anchored right next to Panel 3's upper-right edge without blocking the plot or colorbar
+    ax3.legend(handles=legend_elements_3, loc='upper left', bbox_to_anchor=(1.04, 1.02), fontsize=8, framealpha=0.85, ncol=1, labelspacing=0.5, handletextpad=0.4, borderpad=0.4)
 
     # ------------------------------------------
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
