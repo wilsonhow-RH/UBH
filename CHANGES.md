@@ -205,3 +205,20 @@ raised inside `tricontour`.
 126 render configurations (8 systems × 3 interfacial states × 3 boundary modes,
 plus 6 topology views × 3 boundary modes × 3 umklapp orders on STO(100) at 33°
 in STM-FFT mode) all render without error or numerical warning.
+
+---
+
+# Update 3 — umklapp spots classified by symmetry origin
+
+Panel 3's single yellow-× umklapp set is replaced by four classed sets, each spot
+labelled by the index vector (s; n,m,p,r) that generates it: cyan `+` substrate
+harmonic, red `+` overlayer harmonic, magenta `*` replica harmonic, yellow `×`
+mixed interlayer umklapp, grey `○` origin ambiguous. Marker area scales as 1/N so
+the order hierarchy is visible. New functions `umklapp_indexed()` and
+`classify_umklapp()`; the latter documents the minimal-order canonical rule and the
+resolution tolerance that make the assignment well posed for a dense module.
+
+See `PHYSICS_AUDIT.md` Part 1 for the scheme, the measured intensity-vs-class
+table that validates it, and the ambiguity measurements. Part 2 of that document
+is a module-by-module physics audit with evidence; Part 3 is a prioritized queue of
+what is still open.
