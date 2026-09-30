@@ -111,3 +111,97 @@ not literature values** — they are editable in the UI.
   the displayed image is the STM topography rather than the gap map.
 - `Z_stm_exact` is still built with a per-atom Python loop (~1.6 k atoms at 1× zoom,
   ~40 k at 5×). It is the dominant cost of a rerun and of video rendering.
+
+---
+
+# Update 2 — Panel 3 overlay mismatch, and `boundary_mode` restored
+
+## Why the replica symbols matched nothing in "FFT of STM Topography" mode
+
+Measured on your exact configuration (STO(100), θ = 33°, 3× FOV, quasicrystal
+state, coupling 0.4), peak-picking the STM-FFT and testing each overlay set
+against it:
+
+```
+              MoS₂ G2 (red squares)     6/6   markers on a real spot
+              STO  G1 (cyan circles)    4/4
+              MoS₂ 0°  replica          0/6      <-- all four replica sets
+              MoS₂ 45° replica          0/6           matched nothing
+              STO  33° replica          0/4
+              STO  63° replica          0/4
+              1st-order umklapp G1±G2  20/36   but explained only 10 of 60 spots
+```
+
+Two independent causes [supported by the measurements above]:
+
+**(a) The quasicrystal state never reached the topography.** It modified
+`T_total` and the FFT engine only; `vis_top` and `dist_co` — the sole inputs to
+`stm_topography` — were byte-identical with and without it. Panel 2 and its FFT
+were therefore always the plain rigid structure, so replica markers could not
+land on anything by construction. In the LEED engine the same markers are
+correct: all four sets sit on real peaks, 20/20.
+
+**(b) The satellite spots are a whole lattice, not one difference.** The
+topography is the MoS₂ lattice multiplied by a registry envelope with the moiré
+period, so its Fourier support is the full module `n·G₁ + m·G₂`, not just
+`G₁ ± G₂`. The 1st-order set accounted for 10 of 60 spots; the order-≤5 module
+accounts for 56 of 60.
+
+## Fixes
+
+1. **The quasicrystal state now modulates the topography.** In QC mode the
+   overlayer enters `stm_topography` as three weighted sublattices — the primary
+   one plus a mirror reflection across each substrate mirror line, at the same
+   weight (`strain_coupling × 0.4`) the density engine already used. Each replica
+   carries its own registry amplitude computed against the substrate. After this,
+   both MoS₂ replica marker sets land 6/6 on real STM-FFT spots.
+   *This changes Panel 2's appearance in QC mode* (the replicas are now visible in
+   the topography) — that is the point, but flag it if it isn't what you wanted;
+   reverting is one line in `build_interface`.
+
+2. **Umklapp markers generalised to order n**, with a new "Umklapp Marker Order
+   (n)" slider (0–5, default 3). Markers are drawn at every `n·b₁+m·b₂+p·c₁+r·c₂`
+   with `|n|+|m|+|p|+|r| ≤ order`. In QC mode the replica sublattices get their
+   own satellite sets too (order 3: 64 of 90 spots explained, vs 34 without).
+   Set the slider to 0 to hide them.
+
+3. **Overlays are now mode-aware.** Umklapp markers are shown in STM-FFT mode
+   unconditionally (the registry envelope is always present, independent of the
+   interfacial state), whereas in LEED mode they still appear only once an
+   interfacial state is switched on. Substrate replica markers are suppressed in
+   STM-FFT mode: the substrate lattice is not part of the topography, so they
+   cannot appear there regardless.
+
+**Still unexplained at default settings:** roughly a quarter of the weak spots.
+They are higher-order cross terms (order > 3) and satellites of satellites;
+raising the slider to 5 catches most of them at the cost of a dense marker field.
+
+## `boundary_mode` restored
+
+You were right that it existed — it is in the early version you sent, and it was
+already dead in the version you gave me first (the argument was threaded through
+`create_unified_plot` but the body never referenced it). It has been restored
+from your early file:
+
+- Selector back in column 1: `None` / `Microscopic (Atomic)` / `Mesoscopic (Envelope)`.
+- **Microscopic**: `tricontour` on the Delaunay triangulation of the overlayer
+  atoms, iso-line at registry score 0.5.
+- **Mesoscopic**: atom scores scattered onto a padded grid, dilated with a
+  *circular* footprint of radius 1.5 a (so the envelope keeps the structural
+  symmetry), Gaussian-smoothed, contoured at the midpoint of the smoothed range.
+- **Panel 1 legend restored** (it had also been dropped), with the FWHM domain
+  width and areal coverage annotations that only appear when boundaries are on:
+  `Coincident (W: 1.6Å, Cov: 15.1%)`.
+
+Changes made while restoring: `decay_L` and the hollow/bridge scale factors are
+now returned from `build_interface` as `decay_widths` so the widths are computed
+from one place; `a_mos2` → `cfg["top_a"]` and `N_den` → `N_DEN` for the new
+registry; guards added for degenerate cases (fewer than 4 atoms, a score field
+entirely above or below 0.5, an empty padded region) that would previously have
+raised inside `tricontour`.
+
+## Verification
+
+126 render configurations (8 systems × 3 interfacial states × 3 boundary modes,
+plus 6 topology views × 3 boundary modes × 3 umklapp orders on STO(100) at 33°
+in STM-FFT mode) all render without error or numerical warning.

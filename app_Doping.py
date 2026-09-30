@@ -25,6 +25,7 @@ import numpy as np
 import matplotlib.colors as mcolors
 import matplotlib.cm as cm
 import matplotlib.lines as mlines
+import matplotlib.tri as mtri
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
@@ -298,6 +299,43 @@ def get_hex_G(a, theta_deg):
     return base.dot(rotation_matrix(theta_deg).T)
 
 
+def primitive_pair(G_pts):
+    """Two independent primitive reciprocal vectors out of a first-shell G star.
+
+    Rows 0 and 2 are independent for both get_ortho_G (qx,0 / 0,qy) and
+    get_hex_G (0,q / q*sqrt(3)/2,-q/2).
+    """
+    return G_pts[0], G_pts[2]
+
+
+def reflect_points(pts, phi_deg):
+    """Reflect an (N, 2) array across a line through the origin at angle phi."""
+    c, s = np.cos(2 * np.radians(phi_deg)), np.sin(2 * np.radians(phi_deg))
+    return np.column_stack([pts[:, 0] * c + pts[:, 1] * s,
+                            pts[:, 0] * s - pts[:, 1] * c])
+
+
+def umklapp_lattice(G1_pts, G2_pts, order, q_limit):
+    """Integer combinations n*b1 + m*b2 + p*c1 + r*c2 of the two reciprocal bases.
+
+    The STM topography is the overlayer lattice multiplied by a registry envelope
+    with the moire periodicity, so its Fourier support is this whole module, not
+    just the first-order difference set G1 +/- G2.
+    """
+    b1, b2 = primitive_pair(G1_pts)
+    c1, c2 = primitive_pair(G2_pts)
+    rng = np.arange(-order, order + 1)
+    n, m, p, r = np.meshgrid(rng, rng, rng, rng, indexing='ij')
+    keep = (np.abs(n) + np.abs(m) + np.abs(p) + np.abs(r)) <= order
+    n, m, p, r = n[keep], m[keep], p[keep], r[keep]
+    P = (n[:, None] * b1 + m[:, None] * b2 + p[:, None] * c1 + r[:, None] * c2)
+    P = P[(np.abs(P[:, 0]) <= q_limit) & (np.abs(P[:, 1]) <= q_limit)]
+    if len(P) == 0:
+        return P
+    _, idx = np.unique(np.round(P, 4), axis=0, return_index=True)
+    return P[idx]
+
+
 def get_ortho_bz(ax_, ay_, theta_deg=0.0):
     qx, qy = 2 * np.pi / ax_, 2 * np.pi / ay_
     base = np.array([[qx / 2, qy / 2], [-qx / 2, qy / 2],
@@ -463,20 +501,39 @@ def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
 
     # ---- registry scores ---------------------------------------------------
     if cfg["geometry"] == "ortho":
-        dist_co, dist_ho, dist_br = ortho_registry_distances(vis_top, cfg["sub_ax"], cfg["sub_ay"])
+        def registry(pts):
+            return ortho_registry_distances(pts, cfg["sub_ax"], cfg["sub_ay"])
         ho_scale = 1.0
     else:
         V_sub, invV_sub = hex_basis(cfg["sub_a"])
-        dist_co, dist_ho, dist_br = hex_registry_distances(vis_top, V_sub, invV_sub)
+
+        def registry(pts):
+            return hex_registry_distances(pts, V_sub, invV_sub)
         ho_scale = 1.3
 
-    score_co = np.exp(-(dist_co / decay_L) ** 2)
-    score_ho = np.exp(-(dist_ho / (decay_L * ho_scale)) ** 2)
-    score_br = np.exp(-(dist_br / (decay_L * 0.8)) ** 2)
+    dist_co, dist_ho, dist_br = registry(vis_top)
+    decay_widths = (decay_L, decay_L * ho_scale, decay_L * 0.8)
+
+    score_co = np.exp(-(dist_co / decay_widths[0]) ** 2)
+    score_ho = np.exp(-(dist_ho / decay_widths[1]) ** 2)
+    score_br = np.exp(-(dist_br / decay_widths[2]) ** 2)
+
+    # ---- overlayer sublattices feeding the STM topography ------------------
+    # In the quasicrystal state the density engine adds mirror-reflected copies
+    # of the overlayer with weight `weight`. The atom-resolved topography now
+    # carries the same replicas, so Panel 2 and the FFT of Panel 2 describe the
+    # same structure the LEED engine and the replica overlays describe.
+    top_layers = [(vis_top, dist_co, 1.0)]
+    if qc:
+        w_rep = strain_coupling * 0.4
+        for phi in cfg["mirrors"]:
+            rep = reflect_points(vis_top, phi)
+            top_layers.append((rep, registry(rep)[0], w_rep))
 
     return dict(
-        vis_base=vis_base, vis_top=vis_top,
+        vis_base=vis_base, vis_top=vis_top, top_layers=top_layers,
         dist_co=dist_co, score_co=score_co, score_ho=score_ho, score_br=score_br,
+        decay_widths=decay_widths,
         T_total=T_total, T_fft_engine=T_fft_engine,
         T_sub_fft=T_sub_fft, T_top_fft=T_top_fft,
         G1_pts=G1_pts, G2_pts=G2_pts, BZ1_pts=BZ1_pts, BZ2_pts=BZ2_pts,
@@ -503,16 +560,28 @@ def moire_vectors(G1_pts, G2_pts):
     return g1_A, g1_B, g2_A, g2_B, L1, L2
 
 
-def stm_topography(vis_top, dist_co, current_fov, x_den, y_den):
-    """Sum of registry-weighted Gaussian atomic protrusions on the density grid."""
-    A_i = 1.0 + A_MODULATION * np.exp(-(dist_co ** 2) / (2 * XI_STACK ** 2))
+def stm_topography(top_layers, current_fov, x_den, y_den):
+    """Sum of registry-weighted Gaussian atomic protrusions on the density grid.
+
+    `top_layers` is a list of (positions, coincident-site distances, weight); the
+    quasicrystal state supplies mirror-replica sublattices as extra entries.
+    """
     r_cut = 3.5 * SIGMA_ATOM
     dx = (2 * current_fov) / N_DEN
     Z = np.zeros((N_DEN, N_DEN))
 
-    inside = (np.abs(vis_top[:, 0]) <= current_fov + r_cut) & \
-             (np.abs(vis_top[:, 1]) <= current_fov + r_cut)
-    for ax_pos, ay_pos, amp in zip(vis_top[inside, 0], vis_top[inside, 1], A_i[inside]):
+    for pts, dist_co, weight in top_layers:
+        if weight <= 0 or len(pts) == 0:
+            continue
+        A_i = weight * (1.0 + A_MODULATION * np.exp(-(dist_co ** 2) / (2 * XI_STACK ** 2)))
+        _accumulate_atoms(Z, pts, A_i, current_fov, r_cut, dx, x_den, y_den)
+    return Z
+
+
+def _accumulate_atoms(Z, pts, A_i, current_fov, r_cut, dx, x_den, y_den):
+    inside = (np.abs(pts[:, 0]) <= current_fov + r_cut) & \
+             (np.abs(pts[:, 1]) <= current_fov + r_cut)
+    for ax_pos, ay_pos, amp in zip(pts[inside, 0], pts[inside, 1], A_i[inside]):
         ix0 = max(0, int((ax_pos - r_cut + current_fov) / dx))
         ix1 = min(N_DEN, int((ax_pos + r_cut + current_fov) / dx) + 1)
         iy0 = max(0, int((ay_pos - r_cut + current_fov) / dx))
@@ -522,7 +591,6 @@ def stm_topography(vis_top, dist_co, current_fov, x_den, y_den):
         sub_X, sub_Y = np.meshgrid(x_den[ix0:ix1], y_den[iy0:iy1])
         dist2 = (sub_X - ax_pos) ** 2 + (sub_Y - ay_pos) ** 2
         Z[iy0:iy1, ix0:ix1] += amp * np.exp(-dist2 / (2 * SIGMA_ATOM ** 2))
-    return Z
 
 
 def relax_gap(T_total, relax_mode, w1, w2, user_zmin, user_zmax,
@@ -560,6 +628,71 @@ def safe_limits(data, clip_pct):
     return vmin, vmax
 
 
+def registry_legend(layers, boundary_mode, decay_widths, vis_top, current_fov):
+    """Panel 1 legend; with boundaries on, annotate FWHM width and areal coverage."""
+    fwhm = 2 * np.sqrt(np.log(2))
+    strict = (np.abs(vis_top[:, 0]) <= current_fov) & (np.abs(vis_top[:, 1]) <= current_fov)
+    n_total = max(1, int(np.sum(strict)))
+
+    handles = []
+    for i, name, score, rgb, _edge in layers:
+        label = name
+        if boundary_mode != "None":
+            cov = np.sum(score[strict] >= 0.5) / n_total * 100
+            label = f"{name} (W: {decay_widths[i] * fwhm:.1f}Å, Cov: {cov:.1f}%)"
+        handles.append(mlines.Line2D([0], [0], marker='o', color='w', lw=0,
+                                     markerfacecolor=rgb, markersize=9, label=label))
+    return handles
+
+
+def draw_domain_boundaries(ax, boundary_mode, vis_top, layers, current_fov, top_a):
+    """Iso-contours at registry score 0.5, either atom-resolved or coarse-grained."""
+    if len(vis_top) < 4 or not layers:
+        return
+
+    if boundary_mode == "Microscopic (Atomic)":
+        try:
+            triang = mtri.Triangulation(vis_top[:, 0], vis_top[:, 1])
+        except (ValueError, RuntimeError):
+            return
+        for _i, _name, score, _rgb, edge in layers:
+            if np.nanmax(score) <= 0.5 or np.nanmin(score) >= 0.5:
+                continue
+            ax.tricontour(triang, score, levels=[0.5], colors=edge,
+                          linewidths=1.5, linestyles='solid')
+        return
+
+    # Mesoscopic: dilate the atom-sampled score onto a grid, smooth, contour at
+    # the midpoint of the smoothed range so the envelope of the domains survives.
+    pad_fov = current_fov * 1.2
+    N_pad = int(N_DEN * 1.2)
+    dx = (pad_fov * 2) / N_pad
+
+    valid = (np.abs(vis_top[:, 0]) < pad_fov) & (np.abs(vis_top[:, 1]) < pad_fov)
+    if not np.any(valid):
+        return
+    vt = vis_top[valid]
+    ix = np.clip(np.round((vt[:, 0] + pad_fov) / dx).astype(int), 0, N_pad - 1)
+    iy = np.clip(np.round((vt[:, 1] + pad_fov) / dx).astype(int), 0, N_pad - 1)
+
+    radius = max(1, int(np.ceil((top_a * 1.5) / dx)))
+    y_fp, x_fp = np.ogrid[-radius:radius + 1, -radius:radius + 1]
+    footprint = x_fp ** 2 + y_fp ** 2 <= radius ** 2      # isotropic, preserves symmetry
+
+    pad = np.linspace(-pad_fov, pad_fov, N_pad)
+    X_pad, Y_pad = np.meshgrid(pad, pad)
+
+    for _i, _name, score, _rgb, edge in layers:
+        grid_z = np.zeros((N_pad, N_pad))
+        np.maximum.at(grid_z, (iy, ix), score[valid])
+        grid_z = ndimage.maximum_filter(grid_z, footprint=footprint)
+        grid_z = ndimage.gaussian_filter(grid_z, sigma=radius)
+        z_min, z_max = float(np.min(grid_z)), float(np.max(grid_z))
+        if (z_max - z_min) > 1e-5:
+            ax.contour(X_pad, Y_pad, grid_z, levels=[z_min + (z_max - z_min) * 0.5],
+                       colors=edge, linewidths=1.5, linestyles='solid')
+
+
 def figure_size(show_fs_panel):
     return (24, 18) if show_fs_panel else (22, 6.8)
 
@@ -568,10 +701,11 @@ def figure_size(show_fs_panel):
 # 5. MASTER UNIFIED PLOTTING FUNCTION
 # ==========================================
 def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
-                        view_mode, mid_panel_mode, panel3_mode, den_cmap,
+                        view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap,
                         den_contrast, fft_scale, relax_mode, w1, w2,
                         user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay,
-                        interfacial_state, strain_coupling, is_video_frame=False):
+                        interfacial_state, strain_coupling, umklapp_order=3,
+                        is_video_frame=False):
     cfg = SYSTEMS[system_mode]
     show_fs_panel = cfg["fs_panel"]
     X_fft, Y_fft, q_freq, window_2d = fft_grids()
@@ -618,7 +752,7 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     G1_pts, G2_pts = fields["G1_pts"], fields["G2_pts"]
     BZ1_pts, BZ2_pts = fields["BZ1_pts"], fields["BZ2_pts"]
 
-    Z_stm_exact = stm_topography(vis_top, fields["dist_co"], current_fov, x_den, y_den)
+    Z_stm_exact = stm_topography(fields["top_layers"], current_fov, x_den, y_den)
     g1_A, g1_B, gm_A, gm_B, L1, L2 = moire_vectors(G1_pts, G2_pts)
 
     # ------------------------------------------
@@ -638,13 +772,13 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     ax1.set_ylabel(r"Distance ($\AA$)", color='white')
 
     show_all = (view_mode == 'Show All Registries')
-    layers = []
+    layers = []                                  # (index, name, score, fill rgb, edge colour)
     if show_all or view_mode in ('Coincident + Hollow', 'Coincident Only'):
-        layers.append((fields["score_co"], (1.0, 0.2, 0.3)))
+        layers.append((0, 'Coincident', fields["score_co"], (1.0, 0.2, 0.3), '#ff6666'))
     if show_all or view_mode in ('Coincident + Hollow', 'Hollow Only'):
-        layers.append((fields["score_ho"], (0.1, 0.6, 1.0)))
+        layers.append((1, 'Hollow', fields["score_ho"], (0.1, 0.6, 1.0), '#66b3ff'))
     if show_all or view_mode == 'Bridge Only':
-        layers.append((fields["score_br"], (0.2, 0.8, 0.2)))
+        layers.append((2, 'Bridge', fields["score_br"], (0.2, 0.8, 0.2), '#66ff66'))
 
     if view_mode == 'Raw Lattices':
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='dodgerblue', alpha=0.5)
@@ -652,7 +786,7 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     else:
         ax1.scatter(vis_base[:, 0], vis_base[:, 1], s=2, color='gray', alpha=0.3, marker=',')
         ax1.scatter(vis_top[:, 0], vis_top[:, 1], s=0.5, color='black', alpha=0.05, marker=',')
-        for score, rgb in layers:
+        for _i, _name, score, rgb, _edge in layers:
             mask = score > 0.05
             if not np.any(mask):
                 continue
@@ -661,6 +795,15 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
             colors[:, 3] = score[mask]
             ax1.scatter(vis_top[mask, 0], vis_top[mask, 1],
                         s=base_size * score[mask], c=colors, edgecolors='none')
+
+        if boundary_mode != "None":
+            draw_domain_boundaries(ax1, boundary_mode, vis_top, layers,
+                                   current_fov, cfg["top_a"])
+
+    if view_mode != 'Raw Lattices':
+        ax1.legend(handles=registry_legend(layers, boundary_mode, fields["decay_widths"],
+                                           vis_top, current_fov),
+                   loc='upper right', fontsize=9, framealpha=0.8)
 
     if L1 is not None and np.linalg.norm(L1) < current_fov * 10 \
             and np.linalg.norm(L2) < current_fov * 10:
@@ -787,18 +930,30 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
         mlines.Line2D([0], [0], color='yellow', linestyle='--', lw=1.5, label=r'Moiré Vecs. $\mathbf{q}_{M1}, \mathbf{q}_{M2}$'),
     ]
 
-    if supports_interfacial_state(cfg) and "Rigid" not in interfacial_state and strain_coupling > 0:
-        G_umklapp = np.concatenate([
-            (G1_pts[:, None, :] + G2_pts[None, :, :]).reshape(-1, 2),
-            (G1_pts[:, None, :] - G2_pts[None, :, :]).reshape(-1, 2),
-        ])
-        keep = (np.abs(G_umklapp[:, 0]) < q_max) & (np.abs(G_umklapp[:, 1]) < q_max)
-        if np.any(keep):
-            ax3.scatter(G_umklapp[keep, 0], G_umklapp[keep, 1], color='yellow', s=30,
+    # The STM topography is always registry-modulated, so its Fourier transform
+    # always carries the full umklapp module. The LEED engine only mixes the two
+    # lattices multiplicatively once an interfacial state is switched on.
+    stm_fft_mode = (panel3_mode == "FFT of STM Topography (Panel 2)")
+    show_umklapp = stm_fft_mode or (supports_interfacial_state(cfg)
+                                    and "Rigid" not in interfacial_state
+                                    and strain_coupling > 0)
+    if show_umklapp and umklapp_order >= 1:
+        # Each overlayer sublattice present in the model gets its own satellite
+        # set, so in the quasicrystal state the replicas carry satellites too.
+        top_stars = [G2_pts]
+        if fields["qc"]:
+            top_stars += [get_hex_G(cfg["top_a"], 2 * phi - theta_deg) for phi in cfg["mirrors"]]
+        G_umklapp = np.vstack([umklapp_lattice(G1_pts, star, int(umklapp_order), q_max)
+                               for star in top_stars])
+        if len(G_umklapp):
+            _, _u = np.unique(np.round(G_umklapp, 4), axis=0, return_index=True)
+            G_umklapp = G_umklapp[_u]
+            ax3.scatter(G_umklapp[:, 0], G_umklapp[:, 1], color='yellow', s=30,
                         marker='x', alpha=0.7, zorder=4)
             legend_elements_3.append(
                 mlines.Line2D([0], [0], color='none', marker='x', markeredgecolor='yellow',
-                              markersize=8, label='1st Order Umklapp'))
+                              markersize=8,
+                              label=f'Umklapp lattice (order ≤ {int(umklapp_order)})'))
 
     if fields["qc"]:
         replica_styles = [('orange', 'D'), ('magenta', 'D')]
@@ -812,15 +967,16 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
                 mlines.Line2D([0], [0], color='none', marker=mk, markeredgecolor=col,
                               markersize=8, label=f'{lbl2_short} {phi:g}° Replica'))
 
-        for (phi, col) in ((theta_deg, 'lime'), (theta_deg + 30.0, 'green')):
-            c, s = np.cos(2 * np.radians(phi)), np.sin(2 * np.radians(phi))
-            G_rep = np.column_stack([G1_pts[:, 0] * c + G1_pts[:, 1] * s,
-                                     G1_pts[:, 0] * s - G1_pts[:, 1] * c])
-            ax3.scatter(G_rep[:, 0], G_rep[:, 1], facecolors='none', edgecolors=col,
-                        s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8)
-            legend_elements_3.append(
-                mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor=col,
-                              markersize=8, label=f'{lbl1_short} {phi:g}° Replica'))
+        # Substrate replicas live only in the scattering engine: the substrate
+        # lattice is not part of the STM topography, so they cannot appear in its FFT.
+        if not stm_fft_mode:
+            for (phi, col) in ((theta_deg, 'lime'), (theta_deg + 30.0, 'green')):
+                G_rep = reflect_points(G1_pts, phi)
+                ax3.scatter(G_rep[:, 0], G_rep[:, 1], facecolors='none', edgecolors=col,
+                            s=80, linewidths=1.0, marker='H', zorder=3, alpha=0.8)
+                legend_elements_3.append(
+                    mlines.Line2D([0], [0], color='none', marker='H', markeredgecolor=col,
+                                  markersize=8, label=f'{lbl1_short} {phi:g}° Replica'))
 
     ax3.set_xlim(-q_max, q_max)
     ax3.set_ylim(-q_max, q_max)
@@ -1042,6 +1198,10 @@ def main():
                                  ['Show All Registries', 'Coincident + Hollow',
                                   'Coincident Only', 'Hollow Only', 'Bridge Only',
                                   'Raw Lattices'])
+        boundary_mode = st.selectbox("Domain Boundaries:",
+                                     ["None", "Microscopic (Atomic)", "Mesoscopic (Envelope)"],
+                                     help="Draws iso-contours at registry score 0.5 on Panel 1 "
+                                          "and adds FWHM width / areal coverage to its legend.")
 
     cfg = SYSTEMS[system_mode]
 
@@ -1057,6 +1217,11 @@ def main():
                                 "FFT of STM Topography (Panel 2)"])
         fft_scale = st.slider("FFT Intensity Scale (% Max):", 0.1, 100.0, 10.0, 0.5,
                               help="Lower value enhances weak Moiré FFT spots")
+        umklapp_order = st.slider("Umklapp Marker Order (n):", 0, 5, 3, 1,
+                                  help="Panel 3 marks every spot at n·G₁ + m·G₂ with "
+                                       "|n|+|m| ≤ this order. 0 hides the markers; "
+                                       "higher orders explain more of the satellite spots "
+                                       "at the cost of clutter.")
 
     with col3:
         max_theta = cfg["max_theta"]
@@ -1142,6 +1307,7 @@ def main():
 
     plot_kwargs = dict(
         zoom_factor=zoom_factor, q_max=q_max, k_max=k_max, view_mode=view_mode,
+        boundary_mode=boundary_mode, umklapp_order=umklapp_order,
         mid_panel_mode=mid_panel_mode, panel3_mode=panel3_mode, den_cmap=den_cmap,
         den_contrast=den_contrast, fft_scale=fft_scale, relax_mode=relax_mode,
         w1=w1, w2=w2, user_zmin=user_zmin, user_zmax=user_zmax,
