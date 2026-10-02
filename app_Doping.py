@@ -28,7 +28,7 @@ import matplotlib.lines as mlines
 import matplotlib.tri as mtri
 from matplotlib.colors import LogNorm, Normalize
 from matplotlib.figure import Figure
-from matplotlib.patches import Circle
+from matplotlib.patches import Circle, Ellipse
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 import scipy.ndimage as ndimage
 import imageio
@@ -57,18 +57,37 @@ SUB_EXTENT = FOV_MAX              # substrate lattice generated out to the max F
 TOP_EXTENT = FOV_MAX * 1.5        # overlayer generated wider (it gets rotated)
 
 N_DEN = 512                       # real-space density / STM topography grid
-N_FFT = 512                       # kinematic-scattering grid
+N_FFT = 1024                      # kinematic-scattering grid
+#   Nyquist q = pi*N_FFT/L_FFT = 8.04 A^-1, covering the whole q-Zoom slider
+#   range; at N_FFT = 512 everything beyond 4.02 A^-1 was blank.
 L_FFT = 400.0                     # side length of the scattering grid (Angstrom)
+
+# Quantum capacitance of the overlayer, Cq = e^2 g_s g_v m* / (2 pi hbar^2)  [F/m^2].
+# Monolayer MoS2 conduction band: g_s = 2, g_v = 2 (K valleys), m* ~ 0.45-0.48 m_e
+# -> Cq ~ 0.60 F/m^2, consistent with the ~70 uF/cm^2 quoted for n-type 1L MoS2.
+# Including the higher Q valleys (g_v = 6, m* ~ 0.6) would raise this to ~2.4 F/m^2,
+# which only matters once E_F reaches the Q-valley edge (~0.1-0.25 eV above the CBM).
+CQ_MOS2 = 0.60
+CQ_GRAPHENE_DIRAC = 0.002   # vanishing DOS near the Dirac point; a placeholder scale
 
 # Glassy displacement field (misfit-dislocation mode)
 GLASS_N_WAVES = 40
-GLASS_K0 = 2 * np.pi / 120.0
+GLASS_MOSAIC_FALLBACK = 120.0     # domain spacing used when no moire cell exists
 GLASS_SEED = 42
 
 # STM topography model
 SIGMA_ATOM = 1.0                  # apparent atomic radius (Angstrom)
-XI_STACK = 0.6                    # registry-contrast decay length (Angstrom)
+# (XI_STACK removed: the apparent-height contrast now uses the same registry
+#  decay widths as Panel 1, which previously used 0.98 A while Panel 2 used a
+#  separate hardcoded 0.6 A, so the two panels disagreed on the domain size.)
 A_MODULATION = 1.1                # coincident-site brightness enhancement
+# Relative apparent-height weights of the three stacking registries. The model
+# previously used the coincident site alone, so Panel 2 showed a two-level
+# (coincident / not) contrast while Panel 1 resolved three registries. The
+# ordering below -- top site highest, bridge intermediate, hollow as the
+# reference -- is a modelling choice, not a derived result; set bridge and
+# hollow to 0 to recover the original behaviour.
+REGISTRY_WEIGHTS_DEFAULT = (1.0, 0.4, 0.0)   # (coincident, bridge, hollow)
 
 
 # --- Material-system registry -------------------------------------------------
@@ -97,7 +116,7 @@ SYSTEMS = {
         label1=r"Layer 1 (SrTiO$_3$(100))", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"SrTiO$_3$(100)", top_short=r"MoS$_2$",
         mirrors=(0.0, 45.0), z0=(3.1, 3.6), max_theta=90.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MoS₂/SrTiO₃(110) (Hex-on-Rect)": dict(
         geometry="ortho", sub_ax=A_STO, sub_ay=A_STO_110, top_a=A_MOS2,
@@ -105,7 +124,7 @@ SYSTEMS = {
         label1=r"Layer 1 (SrTiO$_3$(110))", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"SrTiO$_3$(110)", top_short=r"MoS$_2$",
         mirrors=(0.0, 90.0), z0=(3.1, 3.6), max_theta=90.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MoS₂/FeSe (Hex-on-Square)": dict(
         geometry="ortho", sub_ax=A_FESE, sub_ay=A_FESE, top_a=A_MOS2,
@@ -113,7 +132,7 @@ SYSTEMS = {
         label1=r"Layer 1 (FeSe)", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"FeSe", top_short=r"MoS$_2$",
         mirrors=(0.0, 45.0), z0=(3.2, 3.6), max_theta=90.0,
-        fs_panel=True, cq=0.01,
+        fs_panel=True, cq=CQ_MOS2,
     ),
     "MoS₂/Cu(100) (Hex-on-Square)": dict(
         geometry="ortho", sub_ax=A_CU_NN, sub_ay=A_CU_NN, top_a=A_MOS2,
@@ -121,7 +140,7 @@ SYSTEMS = {
         label1=r"Layer 1 (Cu(100))", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"Cu(100)", top_short=r"MoS$_2$",
         mirrors=(0.0, 45.0), z0=(2.8, 3.4), max_theta=90.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MoS₂/Cu(110) (Hex-on-Rect)": dict(
         geometry="ortho", sub_ax=A_CU_FCC, sub_ay=A_CU_NN, top_a=A_MOS2,
@@ -129,7 +148,7 @@ SYSTEMS = {
         label1=r"Layer 1 (Cu(110))", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"Cu(110)", top_short=r"MoS$_2$",
         mirrors=(0.0, 90.0), z0=(2.8, 3.4), max_theta=90.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MoS₂/Bi₂Se₃ (Hex-on-Hex)": dict(
         geometry="hex", sub_a=A_BISE, top_a=A_MOS2,
@@ -137,7 +156,7 @@ SYSTEMS = {
         label1=r"Layer 1 (Bi$_2$Se$_3$)", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"Bi$_2$Se$_3$", top_short=r"MoS$_2$",
         mirrors=(), z0=(3.2, 3.6), max_theta=60.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MoS₂/Graphene (Hex-on-Hex)": dict(
         geometry="hex", sub_a=A_GRAPHENE, top_a=A_MOS2,
@@ -145,7 +164,7 @@ SYSTEMS = {
         label1=r"Layer 1 (Graphene)", label2=r"Layer 2 (MoS$_2$)",
         sub_short=r"Graphene", top_short=r"MoS$_2$",
         mirrors=(), z0=(3.3, 3.6), max_theta=60.0,
-        fs_panel=False, cq=0.01,
+        fs_panel=False, cq=CQ_MOS2,
     ),
     "MATBG (Hex-on-Hex)": dict(
         geometry="hex", sub_a=A_GRAPHENE, top_a=A_GRAPHENE,
@@ -153,7 +172,7 @@ SYSTEMS = {
         label1="Layer 1 (Graphene)", label2="Layer 2 (Rotated)",
         sub_short=r"Graphene", top_short="Rotated",
         mirrors=(), z0=(3.35, 3.6), max_theta=60.0,
-        fs_panel=False, cq=0.002,
+        fs_panel=False, cq=CQ_GRAPHENE_DIRAC,
     ),
 }
 
@@ -424,6 +443,47 @@ def classify_umklapp(G1_pts, top_stars, order, q_limit, tol):
             np.array(ord_out, int), np.array(amb_out, bool))
 
 
+def orbit_classify(q_pts, intensity_of, mirrors, tol_q, tol_I=0.35):
+    """Index-free classification of diffraction spots by point-group orbit.
+
+    Unlike `classify_umklapp`, which needs the index vectors and therefore only
+    works on a model, this asks a question that can be put to measured data:
+    for each spot q and each mirror line of the substrate, is sigma(q) also a
+    spot, and of comparable intensity?
+
+    The physical content is that the mirror replicas of the overlayer are, by
+    construction, the images of the primary Bragg set under the substrate
+    mirrors, so replica-origin spots pair up with primary-origin spots under
+    sigma. Mixed umklapp spots map onto other mixed spots of the same order
+    instead, and spots belonging to the common point group map onto themselves.
+
+    Returns an integer label per spot:
+        2  invariant   -- sigma(q) is q itself (q lies on a mirror line)
+        1  paired      -- sigma(q) is a different spot of comparable intensity
+        0  unpaired    -- sigma(q) has no partner: the spot breaks that mirror
+
+    `intensity_of` is a callable mapping an (N,2) array of q to intensities, so
+    the same routine works on a simulated map or on an experimental FFT.
+    """
+    q_pts = np.asarray(q_pts, dtype=float).reshape(-1, 2)
+    if len(q_pts) == 0 or not mirrors:
+        return np.zeros(len(q_pts), int)
+    I_self = np.asarray(intensity_of(q_pts), dtype=float)
+    I_ref = np.max(I_self) if np.max(I_self) > 0 else 1.0
+
+    labels = np.zeros(len(q_pts), int)
+    for phi in mirrors:
+        img = reflect_points(q_pts, phi)
+        on_line = np.linalg.norm(img - q_pts, axis=1) <= tol_q
+        I_img = np.asarray(intensity_of(img), dtype=float)
+        # comparable brightness, measured on the log scale so weak spots are
+        # compared fairly against weak spots
+        ratio = (I_img + 1e-30) / (I_self + 1e-30)
+        comparable = (np.abs(np.log10(ratio)) < -np.log10(tol_I)) & (I_img > 1e-3 * I_ref)
+        labels = np.maximum(labels, np.where(on_line, 2, np.where(comparable, 1, 0)))
+    return labels
+
+
 def get_ortho_bz(ax_, ay_, theta_deg=0.0):
     qx, qy = 2 * np.pi / ax_, 2 * np.pi / ay_
     base = np.array([[qx / 2, qy / 2], [-qx / 2, qy / 2],
@@ -441,54 +501,98 @@ def get_hex_bz(a, theta_deg=0.0):
 
 # --- Misfit-dislocation ("glassy") displacement field -------------------------
 @st.cache_resource(show_spinner=False)
-def _glass_waves():
+def _glass_waves(k0):
     rng = np.random.default_rng(GLASS_SEED)
-    ks = rng.normal(GLASS_K0, GLASS_K0 * 0.2, GLASS_N_WAVES)
+    ks = rng.normal(k0, k0 * 0.2, GLASS_N_WAVES)
     thetas = rng.uniform(0, 2 * np.pi, GLASS_N_WAVES)
     phases = rng.uniform(0, 2 * np.pi, GLASS_N_WAVES)
     return ks * np.cos(thetas), ks * np.sin(thetas), phases
 
 
-def _glass_raw(X, Y):
-    kx, ky, ph = _glass_waves()
+def _glass_raw(X, Y, k0, dilatational):
+    """Random displacement field mixing a solenoidal and a curl-free component.
+
+        u_sol = sum (-k_y, k_x) sin(k.r + phi)   divergence free: no area change
+        u_dil = sum ( k_x, k_y) sin(k.r + phi)   curl free: pure local dilatation
+
+    The original model used u_sol alone, so div(u) vanished identically and the
+    field carried no misfit strain at all -- but a misfit-dislocation network is
+    precisely a partition of the interface into locally dilated or compressed
+    commensurate domains. `dilatational` is the weight of the curl-free part:
+    0 reproduces the old behaviour, 1 gives a purely dilatational field.
+    """
+    kx, ky, ph = _glass_waves(k0)
+    f = float(np.clip(dilatational, 0.0, 1.0))
     Ux = np.zeros_like(X, dtype=float)
     Uy = np.zeros_like(Y, dtype=float)
     for i in range(GLASS_N_WAVES):
         wave = np.sin(X * kx[i] + Y * ky[i] + ph[i])
-        Ux += -ky[i] * wave
-        Uy += kx[i] * wave
+        Ux += (-ky[i] * (1.0 - f) + kx[i] * f) * wave
+        Uy += (kx[i] * (1.0 - f) + ky[i] * f) * wave
     return Ux, Uy
 
 
 @st.cache_resource(show_spinner=False)
-def _glass_norm():
+def _glass_norm(k0, dilatational):
     """One fixed normalisation constant, shared by grid- and point-sampled calls.
 
-    Normalising each call by its own sample maximum (as the original code did)
-    made the displacement amplitude depend on the sampling set and on the zoom
-    level, so the atom overlay and the density map were displaced by different
-    amounts. A single reference constant removes that inconsistency.
+    Normalising each call by the maximum over its own sample set made the
+    amplitude depend on the sampling and on the zoom level, so the atom overlay
+    and the density map were displaced by different amounts.
     """
     g = np.linspace(-FOV_MAX, FOV_MAX, 256)
     X, Y = np.meshgrid(g, g)
-    Ux, Uy = _glass_raw(X, Y)
+    Ux, Uy = _glass_raw(X, Y, k0, dilatational)
     return float(np.max(np.hypot(Ux, Uy))) + 1e-10
 
 
-def glass_displacement(X, Y, coupling):
-    """Divergence-free random displacement field, amplitude ~ 1.5 * coupling (A)."""
+def glass_displacement(X, Y, coupling, mosaic_L=GLASS_MOSAIC_FALLBACK,
+                       dilatational=0.5):
+    """Random displacement field, peak amplitude ~ 1.5 * coupling (Angstrom).
+
+    mosaic_L is the dominant domain-wall spacing. It was hardcoded at 120 A
+    regardless of twist angle, mismatch or material; the caller now passes the
+    moire period, which is what actually sets the domain size in a relaxed
+    incommensurate contact.
+    """
     if coupling <= 0:
         return np.zeros_like(X, dtype=float), np.zeros_like(Y, dtype=float)
-    Ux, Uy = _glass_raw(X, Y)
-    amp = coupling * 1.5 / _glass_norm()
+    k0 = 2 * np.pi / max(float(mosaic_L), 5.0)
+    Ux, Uy = _glass_raw(X, Y, k0, dilatational)
+    amp = coupling * 1.5 / _glass_norm(k0, dilatational)
     return Ux * amp, Uy * amp
 
 
 # ==========================================
 # 4. INTERFACE FIELD BUILDER
 # ==========================================
+SCATTER_MODELS = ("Kinematic (single scattering)", "Include double diffraction")
+
+
+def combine_layers(T_sub_fft, T_top_fft, scatter_model):
+    """Build the field whose transform Panel 3 squares.
+
+    Summing the two layer densities is single kinematic scattering: each layer
+    diffracts independently and the pattern is the union of the two Bragg sets.
+    Multiplying them represents an electron diffracted by one layer and again by
+    the other, which is what generates the umklapp satellites at n*G1 + m*G2.
+
+    Real LEED is multiple-scattering dominated and double-diffraction spots are
+    routine for any incommensurate overlayer, so this is now its own control.
+    Previously the product was switched on only by selecting an interfacial phase
+    state, which made an unrelated setting gate whether double diffraction
+    existed at all.
+    """
+    if scatter_model == SCATTER_MODELS[0]:
+        return T_sub_fft + T_top_fft
+    return T_sub_fft * T_top_fft
+
+
 def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
-                    interfacial_state, strain_coupling):
+                    interfacial_state, strain_coupling,
+                    scatter_model='Include double diffraction',
+                    mosaic_L=0.0, dilatational=0.5,
+                    registry_weights=REGISTRY_WEIGHTS_DEFAULT):
     """Assemble every system-dependent quantity used by Panels 1-3.
 
     Returns a dict with the visible lattices, the registry scores, the real-space
@@ -540,9 +644,20 @@ def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
     T_top_fft = get_hex_density(top_a, X_fft, Y_fft, theta_deg)
 
     # ---- interfacial phase state -----------------------------------------
+    # Domain spacing defaults to the moire period rather than a hardcoded 120 A.
+    if mosaic_L and mosaic_L > 0:
+        glass_L = float(mosaic_L)
+    else:
+        *_, L1m, L2m = moire_vectors(G1_pts, G2_pts)
+        glass_L = (GLASS_MOSAIC_FALLBACK if L1m is None else
+                   float(np.clip(0.5 * (np.linalg.norm(L1m) + np.linalg.norm(L2m)),
+                                 10.0, 1000.0)))
+
     if glass:
-        Ux_den, Uy_den = glass_displacement(X_den, Y_den, strain_coupling)
-        Ux_pts, Uy_pts = glass_displacement(vis_top[:, 0], vis_top[:, 1], strain_coupling)
+        Ux_den, Uy_den = glass_displacement(X_den, Y_den, strain_coupling,
+                                            glass_L, dilatational)
+        Ux_pts, Uy_pts = glass_displacement(vis_top[:, 0], vis_top[:, 1],
+                                            strain_coupling, glass_L, dilatational)
 
         # Evaluating the density at (X - U) shifts the pattern by +U, so the
         # discrete atoms must also move by +U. The original code moved them by
@@ -550,8 +665,19 @@ def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
         T_top_den = get_hex_density(top_a, X_den - Ux_den, Y_den - Uy_den, theta_deg)
         vis_top = vis_top + np.column_stack([Ux_pts, Uy_pts])
 
+        # Scattering from the ACTUAL displaced lattice. The previous model blurred
+        # the intensity of the undisplaced overlayer with a width proportional to
+        # the coupling and scaled it by an arbitrary x3, which neither suppresses
+        # Bragg peaks by the correct G-dependent Debye-Waller factor nor conserves
+        # the weight it removes. Transforming the displaced density does both
+        # automatically: exp(-<(G.u)^2>) falls off with |G|, and the missing weight
+        # reappears as diffuse scattering.
+        Ux_f, Uy_f = glass_displacement(X_fft, Y_fft, strain_coupling,
+                                        glass_L, dilatational)
+        T_top_fft = get_hex_density(top_a, X_fft - Ux_f, Y_fft - Uy_f, theta_deg)
+
         T_total = T_sub_den * T_top_den
-        T_fft_engine = None            # Panel 3 blurs the two layers separately
+        T_fft_engine = combine_layers(T_sub_fft, T_top_fft, scatter_model)
 
     elif qc:
         weight = strain_coupling * 0.4
@@ -581,11 +707,11 @@ def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
 
         T_total = T_sub_qc * T_top_qc
         T_sub_fft, T_top_fft = T_sub_fft_qc, T_top_fft_qc
-        T_fft_engine = T_sub_fft * T_top_fft
+        T_fft_engine = combine_layers(T_sub_fft, T_top_fft, scatter_model)
 
     else:
         T_total = T_sub_den * T_top_den
-        T_fft_engine = T_sub_fft + T_top_fft
+        T_fft_engine = combine_layers(T_sub_fft, T_top_fft, scatter_model)
 
     # ---- registry scores ---------------------------------------------------
     if cfg["geometry"] == "ortho":
@@ -611,12 +737,20 @@ def build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
     # of the overlayer with weight `weight`. The atom-resolved topography now
     # carries the same replicas, so Panel 2 and the FFT of Panel 2 describe the
     # same structure the LEED engine and the replica overlays describe.
-    top_layers = [(vis_top, dist_co, 1.0)]
+    def height_score(pts):
+        """Registry-resolved apparent-height modulation, in [0, ~1]."""
+        d_co, d_ho, d_br = registry(pts)
+        w_co, w_br, w_ho = registry_weights
+        return (w_co * np.exp(-(d_co / decay_widths[0]) ** 2)
+                + w_br * np.exp(-(d_br / decay_widths[2]) ** 2)
+                + w_ho * np.exp(-(d_ho / decay_widths[1]) ** 2))
+
+    top_layers = [(vis_top, height_score(vis_top), 1.0)]
     if qc:
         w_rep = strain_coupling * 0.4
         for phi in cfg["mirrors"]:
             rep = reflect_points(vis_top, phi)
-            top_layers.append((rep, registry(rep)[0], w_rep))
+            top_layers.append((rep, height_score(rep), w_rep))
 
     return dict(
         vis_base=vis_base, vis_top=vis_top, top_layers=top_layers,
@@ -651,17 +785,17 @@ def moire_vectors(G1_pts, G2_pts):
 def stm_topography(top_layers, current_fov, x_den, y_den):
     """Sum of registry-weighted Gaussian atomic protrusions on the density grid.
 
-    `top_layers` is a list of (positions, coincident-site distances, weight); the
+    `top_layers` is a list of (positions, registry height score, weight); the
     quasicrystal state supplies mirror-replica sublattices as extra entries.
     """
     r_cut = 3.5 * SIGMA_ATOM
     dx = (2 * current_fov) / N_DEN
     Z = np.zeros((N_DEN, N_DEN))
 
-    for pts, dist_co, weight in top_layers:
+    for pts, score, weight in top_layers:
         if weight <= 0 or len(pts) == 0:
             continue
-        A_i = weight * (1.0 + A_MODULATION * np.exp(-(dist_co ** 2) / (2 * XI_STACK ** 2)))
+        A_i = weight * (1.0 + A_MODULATION * score)
         _accumulate_atoms(Z, pts, A_i, current_fov, r_cut, dx, x_den, y_den)
     return Z
 
@@ -682,8 +816,31 @@ def _accumulate_atoms(Z, pts, A_i, current_fov, r_cut, dx, x_den, y_den):
 
 
 def relax_gap(T_total, relax_mode, w1, w2, user_zmin, user_zmax,
-              k_elastic, k_vdw, iterations):
-    """Map the kinematic density onto an interfacial gap z(r), then relax it."""
+              smooth_len, k_vdw, dx, iterations=12,
+              elastic_operator='Membrane tension (∇²)'):
+    """Map the kinematic density onto an interfacial gap z(r), then relax it.
+
+    The continuum model is the steady state of
+
+        0 = kappa grad^2 z - k_vdw (z - z_0) - A_elec / z^2 ,
+
+    with kappa = k_vdw * smooth_len^2. Writing the electrostatic term as a source
+    S(z) = A_elec / z^2 and transforming, the linear part inverts exactly:
+
+        z(k) = [ z_0(k) - S(k)/k_vdw ] / ( 1 + smooth_len^2 k^2 )
+
+    i.e. a Lorentzian low-pass of half-power wavevector 1/smooth_len. Only the
+    nonlinear source is iterated, and it converges in a few passes because the
+    electrostatic pull is a weak perturbation on the vdW template.
+
+    This replaces the previous explicit Euler loop over `ndimage.laplace`, which
+    was a PIXEL Laplacian: kappa was effectively scaled by dx^2, so the same
+    physical system relaxed differently at different zoom levels, and the step
+    size sat close to the explicit stability limit once dx^2 was divided out.
+    Here k is in physical A^-1, so the result no longer depends on the field of
+    view, the scheme is unconditionally stable, and the linear part is exact
+    rather than partially converged.
+    """
     span = np.max(T_total) - np.min(T_total)
     T_norm = (T_total - np.min(T_total)) / (span + 1e-10)
     Z_0 = user_zmin + T_norm * (user_zmax - user_zmin)
@@ -692,19 +849,76 @@ def relax_gap(T_total, relax_mode, w1, w2, user_zmin, user_zmax,
         return Z_0.copy()
 
     if relax_mode == "Fast Proxy (Algebraic Shift)":
+        # NOTE: a rigid shift, so it adds no spatial structure -- the doping and
+        # e-ph maps differ from rigid mode by a constant only.
         compression = 0.2 * (w2 - w1) ** 2
         return np.clip(Z_0 - compression, a_min=2.0, a_max=None)
 
-    # Continuum mechanics: gradient descent on elastic + vdW + image-charge terms
-    Z_map = Z_0.copy()
-    lr = 0.05 / (1.0 + k_elastic * 10)
-    A_elec = 0.5 * (w2 - w1) ** 2
-    for _ in range(iterations):
-        F_elastic = k_elastic * ndimage.laplace(Z_map)
-        F_vdw = -k_vdw * (Z_map - Z_0)
-        F_elec = -A_elec / (Z_map ** 2)
-        Z_map = np.clip(Z_map + lr * (F_elastic + F_vdw + F_elec), 1.5, 5.0)
-    return Z_map
+    # meV/A^3; k_vdw is in meV/A^4, so (A_elec/k_vdw)/z^2 is a length.
+    A_elec = K_ELEC * (w2 - w1) ** 2
+    z_hi = max(5.0, user_zmax + 1.0)
+    if smooth_len <= 0 and A_elec == 0:
+        return np.clip(Z_0, 1.5, z_hi)
+
+    # The spectral solve imposes periodic boundaries, which the field of view does
+    # not obey, so the frame edge is otherwise smoothed against the opposite edge.
+    # Measured effect of reflect-padding by 3 smoothing lengths (3x zoom, theta=17.2):
+    # 21.9 mA at l = 1 A, 5.1 mA at l = 3 A, 0.2 mA at l = 50 A -- it matters most at
+    # SMALL l, where sharp atomic corrugation mismatches across the wrap, and the
+    # default-l error is comparable to the interior signal (sigma ~ 3.3 mA). Cost is
+    # ~0.1 s. NOTE: the long-wavelength structure that looks like an edge effect in
+    # the rendered map is usually not one -- at twists where the moire period is
+    # comparable to the field of view, the frame simply contains ~1 moire cell.
+    n = Z_0.shape[0]
+    pad = int(np.clip(np.ceil(3.0 * smooth_len / dx), 8, n // 2))
+    Z_0p = np.pad(Z_0, pad, mode='reflect')
+    m = Z_0p.shape[0]
+
+    k1 = 2 * np.pi * np.fft.fftfreq(m, d=dx)
+    K2 = k1[:, None] ** 2 + k1[None, :] ** 2
+    if elastic_operator.startswith("Bending"):
+        # True bending rigidity: the force is -kappa grad^4 z, so the response is
+        # 1/(1 + l^4 k^4). This is the physically correct operator for a monolayer;
+        # the tension form 1/(1 + l^2 k^2) is kept because it is what the original
+        # +kappa grad^2 z term corresponded to.
+        lowpass = 1.0 / (1.0 + (smooth_len ** 4) * K2 ** 2)
+    else:
+        lowpass = 1.0 / (1.0 + (smooth_len ** 2) * K2)
+
+    Zp = Z_0p.copy()
+    for _ in range(int(iterations)):
+        src = Z_0p - (A_elec / max(k_vdw, 1e-6)) / (Zp ** 2)
+        Zp = np.clip(np.real(np.fft.ifft2(np.fft.fft2(src) * lowpass)), 1.5, z_hi)
+    return Zp[pad:pad + n, pad:pad + n]
+
+
+EPS0 = 8.854e-12          # F/m
+E_CHARGE = 1.602e-19      # C
+
+# Electrostatic pressure between two plates held at a fixed potential difference
+# is eps0*dV^2/(2 z^2). Expressed as an energy per unit area in meV/A^2 with z in
+# Angstrom, U(z) = -K_ELEC * dV^2 / z, so the force per area is -K_ELEC*dV^2/z^2
+# with K_ELEC in meV/A. This replaces the previous coefficient 0.5*(w2-w1)^2,
+# which had units of eV^2 and was used directly as a force -- an arbitrary scale.
+K_ELEC = 62.42 * EPS0 / 2e-10     # = 2.764 meV/A per volt^2
+
+
+def carrier_density(Z_map, delta_W, Cq, C_sc=0.0):
+    """Charge transferred into layer 2, in cm^-2.
+
+    Series chain: geometric gap capacitance eps0/z, the overlayer quantum
+    capacitance Cq, and -- optionally -- a substrate space-charge capacitance
+    C_sc. The last one matters because SrTiO3 is a semiconductor, not a metal: a
+    depletion or accumulation layer forms and sits in series with the gap. C_sc = 0
+    here means "omit it" (a metallic substrate), which is what the model assumed
+    throughout. A proper treatment needs a Poisson solve in the substrate with a
+    field-dependent permittivity; this is a lumped stand-in, not that.
+    """
+    C_geom = EPS0 / (Z_map * 1e-10)
+    inv = 1.0 / C_geom + 1.0 / max(Cq, 1e-9)
+    if C_sc and C_sc > 0:
+        inv = inv + 1.0 / C_sc
+    return (delta_W / inv) / E_CHARGE / 1e4
 
 
 def safe_limits(data, clip_pct):
@@ -791,8 +1005,14 @@ def figure_size(show_fs_panel):
 def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
                         view_mode, boundary_mode, mid_panel_mode, panel3_mode, den_cmap,
                         den_contrast, fft_scale, relax_mode, w1, w2,
-                        user_zmin, user_zmax, k_elastic, k_vdw, eph_g0, eph_decay,
+                        user_zmin, user_zmax, smooth_len, k_vdw, eph_g0, eph_q0,
                         interfacial_state, strain_coupling, umklapp_order=3,
+                        layer2_cq=None, scatter_model='Include double diffraction',
+                        mosaic_L=0.0, dilatational=0.5,
+                        registry_weights=REGISTRY_WEIGHTS_DEFAULT,
+                        substrate_csc=0.0, layer2_n0=0.0,
+                        classify_mode='Index-based (model)',
+                        elastic_operator='Membrane tension (∇²)',
                         is_video_frame=False):
     cfg = SYSTEMS[system_mode]
     show_fs_panel = cfg["fs_panel"]
@@ -835,7 +1055,9 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     X_den, Y_den = np.meshgrid(x_den, y_den)
 
     fields = build_interface(cfg, theta_deg, current_fov, X_den, Y_den,
-                             interfacial_state, strain_coupling)
+                             interfacial_state, strain_coupling,
+                             scatter_model, mosaic_L, dilatational,
+                             registry_weights)
     vis_base, vis_top = fields["vis_base"], fields["vis_top"]
     G1_pts, G2_pts = fields["G1_pts"], fields["G2_pts"]
     BZ1_pts, BZ2_pts = fields["BZ1_pts"], fields["BZ2_pts"]
@@ -913,8 +1135,11 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     # SHARED Z-MAP: THE PHYSICS SOLVER ENGINE
     # ------------------------------------------
     Z_map = relax_gap(fields["T_total"], relax_mode, w1, w2, user_zmin, user_zmax,
-                      k_elastic, k_vdw, iterations=120 if is_video_frame else 50)
+                      smooth_len, k_vdw, dx=(2 * current_fov) / N_DEN,
+                      elastic_operator=elastic_operator)
     final_zmin, final_zmax = float(np.min(Z_map)), float(np.max(Z_map))
+    Cq_eff = cfg["cq"] if layer2_cq is None else float(layer2_cq)
+    delta_n_map = carrier_density(Z_map, (w2 - w1), Cq_eff, substrate_csc)
     gap_note = f"Relaxed Gap: [{final_zmin:.2f} Å, {final_zmax:.2f} Å]"
 
     # ------------------------------------------
@@ -924,18 +1149,24 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
         data2, cmap_lbl = Z_stm_exact, 'Tunneling Density (a.u.)'
         title2, title_col = f"Registry-Modulated STM Topography\n{gap_note}", 'white'
     elif mid_panel_mode == 'Local Doping (Δn)':
-        epsilon_0, e_charge = 8.854e-12, 1.602e-19
-        delta_W = (w2 - w1) if (w2 - w1) != 0 else 1e-6
-        C_geom = epsilon_0 / (Z_map * 1e-10)
-        C_total = (C_geom * cfg["cq"]) / (C_geom + cfg["cq"])
-        data2 = (C_total * delta_W) / e_charge / 1e4        # cm^-2
+        # The old code substituted dW = 1e-6 when the work functions were equal,
+        # only to avoid a degenerate colourbar; safe_limits() handles that now, so
+        # equal work functions correctly give no charge transfer at all.
+        data2 = delta_n_map
         cmap_lbl = r'Carrier Density $\Delta n$ (cm$^{-2}$)'
         title2 = "Local Doping in Layer 2: $\\Delta n$ (cm$^{-2}$)\n" + gap_note
         title_col = '#ffcc00'
     else:  # e-ph Coupling (g)
-        data2 = eph_g0 * np.exp(-(Z_map - user_zmin) / eph_decay)
+        # An interfacial polar phonon of in-plane wavevector q couples to the
+        # overlayer as exp(-q z), so the decay length is 1/q0, not a free
+        # constant. g0 is referenced to the actual minimum of the relaxed map,
+        # so "coupling at the minimum gap" is true after relaxation as well.
+        data2 = eph_g0 * np.exp(-eph_q0 * (Z_map - np.min(Z_map)))
         cmap_lbl = r'Coupling Strength $g$ (meV)'
-        title2 = "Evanescent e-ph Coupling: $g(\\mathbf{r})$\n" + gap_note
+        contrast = 100.0 * (1.0 - np.exp(-eph_q0 * (final_zmax - final_zmin)))
+        title2 = (r"Evanescent e-ph Coupling: $g(\mathbf{r})$"
+                  + f"\n$q_0$ = {eph_q0:.3f} " + r"$\AA^{-1}$"
+                  + f" ($1/q_0$ = {1.0 / eph_q0:.0f} Å) | spatial contrast {contrast:.1f}%")
         title_col = '#00ffcc'
 
     vmin2, vmax2 = safe_limits(data2, den_contrast)
@@ -970,23 +1201,16 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
         cbar_lbl = 'FFT Amplitude (a.u.)'
     else:
         q_lo, q_hi = q_freq[0], q_freq[-1]
-        if fields["glass"]:
-            sub_c = (fields["T_sub_fft"] - np.mean(fields["T_sub_fft"])) * window_2d
-            top_c = (fields["T_top_fft"] - np.mean(fields["T_top_fft"])) * window_2d
-            int_sub = np.abs(np.fft.fftshift(np.fft.fft2(sub_c))) ** 2
-            int_top = np.abs(np.fft.fftshift(np.fft.fft2(top_c))) ** 2
-            int_top = ndimage.gaussian_filter(int_top, sigma=0.5 + strain_coupling * 4.0)
-            intensity_3 = int_sub + (int_top * 3.0) + 1e-10
-        else:
-            engine = fields["T_fft_engine"]
-            centered = (engine - np.mean(engine)) * window_2d
-            intensity_3 = np.abs(np.fft.fftshift(np.fft.fft2(centered))) ** 2 + 1e-10
-            intensity_3 = ndimage.gaussian_filter(intensity_3, sigma=0.5)
+        engine = fields["T_fft_engine"]
+        centered = (engine - np.mean(engine)) * window_2d
+        intensity_3 = np.abs(np.fft.fftshift(np.fft.fft2(centered))) ** 2 + 1e-10
+        intensity_3 = ndimage.gaussian_filter(intensity_3, sigma=0.5)
 
         im3 = ax3.imshow(intensity_3, extent=[q_lo, q_hi, q_lo, q_hi], origin='lower',
                          cmap='viridis',
                          norm=LogNorm(vmin=np.max(intensity_3) * 1e-4, vmax=np.max(intensity_3)))
-        title_3 = (f"Scattering (Simulated LEED)\nTwist: {theta_deg}"
+        sm_tag = "kinematic" if scatter_model == SCATTER_MODELS[0] else "with double diffraction"
+        title_3 = (f"Scattering (Simulated LEED, {sm_tag})\nTwist: {theta_deg}"
                    + r"$^\circ$" + f" | q-Zoom: {q_max} Å⁻¹")
         cbar_lbl = 'Scattering Intensity (a.u.)'
 
@@ -1039,6 +1263,32 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
 
         Gq, Gcls, Gord, Gamb = classify_umklapp(G1_pts, top_stars, int(umklapp_order),
                                                 q_max, tol_q)
+
+        if classify_mode.startswith("Point-group") and len(Gq) and cfg["mirrors"]:
+            # Re-label from the intensity map itself rather than from indices, so
+            # the same test can be applied to measured data.
+            q_axis = np.linspace(q_lo, q_hi, intensity_3.shape[0])
+
+            def intensity_of(pts):
+                ix = np.clip(np.searchsorted(q_axis, pts[:, 0]), 0, len(q_axis) - 1)
+                iy = np.clip(np.searchsorted(q_axis, pts[:, 1]), 0, len(q_axis) - 1)
+                return intensity_3[iy, ix]
+
+            lab = orbit_classify(Gq, intensity_of, cfg["mirrors"], tol_q)
+            orbit_styles = {2: ('cyan', 'D', 'on a mirror line (invariant)'),
+                            1: ('magenta', '*', 'mirror-paired (replica-type)'),
+                            0: ('yellow', 'x', 'mirror-breaking (umklapp-type)')}
+            for lv, (col, mk, name) in orbit_styles.items():
+                sel = lab == lv
+                if not np.any(sel):
+                    continue
+                ax3.scatter(Gq[sel, 0], Gq[sel, 1], color=col, s=60.0 / Gord[sel],
+                            marker=mk, alpha=0.75, zorder=4, linewidths=1.0)
+                legend_elements_3.append(
+                    mlines.Line2D([0], [0], color='none', marker=mk, markeredgecolor=col,
+                                  markerfacecolor='none', markersize=7, label=name))
+            Gq = Gq[:0]          # orbit labels drawn instead of the index labels
+
         if len(Gq):
             styles = {
                 0: ('cyan',    '+', r'substrate harmonic $n\mathbf{b}$'),
@@ -1106,25 +1356,43 @@ def create_unified_plot(fig, system_mode, theta_deg, zoom_factor, q_max, k_max,
     # PANEL 4: EXTENDED FERMI SURFACE MAP (FeSe ONLY)
     # ------------------------------------------
     if show_fs_panel and ax4 is not None:
+        n_total = float(layer2_n0) + float(np.mean(delta_n_map))
         draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max,
-                                 interfacial_state, strain_coupling)
+                                 interfacial_state, strain_coupling,
+                                 n_layer2=n_total)
 
     return fig
 
 
-def draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max, interfacial_state, strain_coupling):
+def fermi_k(n_cm2, g_sv=4.0):
+    """2D Fermi wavevector from a sheet carrier density: n = g_s g_v k_F^2 / (4 pi)."""
+    n_A2 = max(float(n_cm2), 0.0) * 1e-16
+    return float(np.sqrt(4.0 * np.pi * n_A2 / g_sv))
+
+
+def draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max, interfacial_state,
+                             strain_coupling, n_layer2=None, fese_ecc=1.8):
     """Mutual band folding of the FeSe M-pockets and the MoS2 K-pockets."""
     ax4.set_xlim(-k_max, k_max)
     ax4.set_ylim(-k_max, k_max)
-    ax4.set_title("Fermi Surface Extended BZ (Mutual Band Folding)\n"
-                  + interfacial_state.split(':')[0], color='white', fontsize=15)
+    title4 = "Fermi Surface Extended BZ (Mutual Band Folding)\n" + interfacial_state.split(':')[0]
+    if n_layer2 is not None:
+        title4 += (f" | layer 2: n = {n_layer2:.2e} cm$^{{-2}}$, "
+                   f"$k_F$ = {fermi_k(n_layer2):.3f} " + r"$\AA^{-1}$")
+    ax4.set_title(title4, color='white', fontsize=15)
     ax4.set_xlabel(r"$k_x$ ($\AA^{-1}$)", color='white')
     ax4.set_ylabel(r"$k_y$ ($\AA^{-1}$)", color='white')
     ax4.axhline(0, color='gray', lw=0.5, alpha=0.5)
     ax4.axvline(0, color='gray', lw=0.5, alpha=0.5)
 
     a_sub, a_top = cfg["sub_ax"], cfg["top_a"]
-    r_sub, r_top = 0.175, 0.10
+    r_sub = 0.175                      # FeSe M-pocket k_F, ~0.20 A^-1 experimentally
+    # The overlayer pocket was also a hardcoded 0.10 A^-1 (n = 3.2e13 cm^-2), with
+    # no link to the carrier density the doping panel computes. It is now derived
+    # from n_layer2 = background doping + transferred charge.
+    r_top = 0.10 if n_layer2 is None else fermi_k(n_layer2)
+    if r_top < 1e-3:
+        r_top = 1e-3
 
     q_sub = 2 * np.pi / a_sub
     G1_all, G1_shell1, G1_shell2 = [], [], []
@@ -1181,14 +1449,25 @@ def draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max, interfacial_state, stra
     plot_bzs(G1_all, BZ_sub_base, 'cyan')
     plot_bzs(G2_all, BZ_top_base, 'red')
 
-    def plot_fs(centers, r, col, lw, ls, alpha):
-        for pt in centers:
-            if abs(pt[0]) > k_max + r or abs(pt[1]) > k_max + r:
-                continue
-            ax4.add_patch(Circle((pt[0], pt[1]), r, color=col, fill=False,
-                                 lw=lw, ls=ls, alpha=alpha))
+    def plot_fs(centers, r, col, lw, ls, alpha, ecc=1.0):
+        """Draw pockets; ecc > 1 makes them ellipses elongated along Gamma-pocket.
 
-    plot_fs(M_pts, r_sub, 'cyan', 2.5, '-', 1.0)
+        The FeSe M-point electron pockets are elliptical, not circular; the
+        overlayer K pockets are taken as isotropic (ecc = 1).
+        """
+        for pt in centers:
+            if abs(pt[0]) > k_max + r * ecc or abs(pt[1]) > k_max + r * ecc:
+                continue
+            if ecc == 1.0:
+                ax4.add_patch(Circle((pt[0], pt[1]), r, color=col, fill=False,
+                                     lw=lw, ls=ls, alpha=alpha))
+            else:
+                ang = np.degrees(np.arctan2(pt[1], pt[0]))
+                ax4.add_patch(Ellipse((pt[0], pt[1]), 2 * r * np.sqrt(ecc),
+                                      2 * r / np.sqrt(ecc), angle=ang, color=col,
+                                      fill=False, lw=lw, ls=ls, alpha=alpha))
+
+    plot_fs(M_pts, r_sub, 'cyan', 2.5, '-', 1.0, fese_ecc)
     plot_fs(K_pts, r_top, 'red', 2.5, '-', 1.0)
 
     legend_elements_4 = [
@@ -1203,9 +1482,9 @@ def draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max, interfacial_state, stra
         lw1 = 3.0 if is_glass else 1.5
         lw2 = 3.0 if is_glass else 1.0
 
-        plot_fs([m + g for m in M_pts for g in G2_shell1], r_sub, 'cyan', lw1, '--', alpha1 * strain_coupling)
+        plot_fs([m + g for m in M_pts for g in G2_shell1], r_sub, 'cyan', lw1, '--', alpha1 * strain_coupling, fese_ecc)
         plot_fs([k + g for k in K_pts for g in G1_shell1], r_top, 'red', lw1, '--', alpha1 * strain_coupling)
-        plot_fs([m + g for m in M_pts for g in G2_shell2], r_sub, 'cyan', lw2, ':', alpha2 * strain_coupling)
+        plot_fs([m + g for m in M_pts for g in G2_shell2], r_sub, 'cyan', lw2, ':', alpha2 * strain_coupling, fese_ecc)
         plot_fs([k + g for k in K_pts for g in G1_shell2], r_top, 'red', lw2, ':', alpha2 * strain_coupling)
 
         legend_elements_4.extend([
@@ -1232,7 +1511,7 @@ def draw_fermi_surface_panel(ax4, cfg, theta_deg, k_max, interfacial_state, stra
                 c, s = np.cos(2 * np.radians(phi)), np.sin(2 * np.radians(phi))
                 M_rep = np.column_stack([M_pts[:, 0] * c + M_pts[:, 1] * s,
                                          M_pts[:, 0] * s - M_pts[:, 1] * c])
-                plot_fs(M_rep, r_sub * 1.08, col, 2.0, '--', 0.9)
+                plot_fs(M_rep, r_sub * 1.08, col, 2.0, '--', 0.9, fese_ecc)
                 legend_elements_4.append(
                     mlines.Line2D([0], [0], marker='o', color='none', markeredgecolor=col,
                                   markersize=10, lw=2.0, ls='--', alpha=0.9,
@@ -1326,6 +1605,20 @@ def main():
         panel3_mode = st.radio("Panel 3 Mode:",
                                ["Scattering (Simulated LEED)",
                                 "FFT of STM Topography (Panel 2)"])
+        scatter_model = st.selectbox("Scattering Model:", list(SCATTER_MODELS), index=1,
+                                     help="Summing the two layer densities is single "
+                                          "kinematic scattering. Multiplying them adds "
+                                          "double diffraction, which is what generates the "
+                                          "umklapp satellites and is routine in real LEED. "
+                                          "Previously this was switched on as a side effect "
+                                          "of selecting an interfacial phase state.")
+        classify_mode = st.selectbox("Umklapp Classification:",
+                                     ["Index-based (model)", "Point-group orbit (data-like)"],
+                                     help="Index-based labels each spot by the (n,m,p,r) that "
+                                          "generates it — only possible for a model. The orbit "
+                                          "test instead asks whether the mirror image of a spot "
+                                          "is also a spot of comparable intensity, which can be "
+                                          "applied to a measured FFT.")
         fft_scale = st.slider("FFT Intensity Scale (% Max):", 0.1, 100.0, 10.0, 0.5,
                               help="Lower value enhances weak Moiré FFT spots")
         umklapp_order = st.slider("Umklapp Marker Order (n):", 0, 5, 3, 1,
@@ -1360,6 +1653,21 @@ def main():
         with pcol2:
             strain_coupling = st.slider("Interfacial Coupling Strength", 0.0, 1.0, 0.4, 0.1,
                                         help="Scales domain mosaicity (Mode 2) or resonant reflection (Mode 3).")
+        if "Misfit Dislocation Glass" in interfacial_state and supports_interfacial_state(cfg):
+            gcol1, gcol2 = st.columns(2)
+            with gcol1:
+                dilatational = st.slider("Dilatational Fraction of u(r)", 0.0, 1.0, 0.5, 0.05,
+                                         help="0 = divergence-free (the original model: no local "
+                                              "area change, hence no misfit strain). 1 = purely "
+                                              "dilatational. A real misfit network has both.")
+            with gcol2:
+                mosaic_L = st.number_input("Mosaic Wavelength (Å), 0 = auto", 0.0, 1000.0, 0.0, 10.0,
+                                           help="Domain-wall spacing. 0 uses the moiré period, "
+                                                "which is what actually sets domain size. The old "
+                                                "model hardcoded 120 Å for every system and twist.")
+        else:
+            dilatational, mosaic_L = 0.5, 0.0
+
         if not supports_interfacial_state(cfg):
             st.caption("ℹ️ Modes 2 and 3 are only implemented for hex-on-square and "
                        "hex-on-rectangular systems; this system is rendered as a rigid vdW gap.")
@@ -1371,7 +1679,7 @@ def main():
             "Rigid Lattices (No Relaxation)",
             "Fast Proxy (Algebraic Shift)",
             "Continuum Mechanics (PDE Solver)",
-        ])
+        ], help="Fast Proxy applies a rigid shift only — it adds no spatial structure.")
 
         base_zmin, base_zmax = cfg["z0"]
 
@@ -1391,30 +1699,100 @@ def main():
                                         value=float(base_zmax), step=0.1,
                                         key=f"zmax::{system_mode}")
 
-        k_elastic, k_vdw = 0.0, 0.0
+        qcol1, qcol2, qcol3 = st.columns(3)
+        with qcol2:
+            substrate_csc = st.number_input(r"Substrate Space-Charge $C_{sc}$ (F/m², 0 = off)",
+                                            0.0, 10.0, 0.0, 0.01, format="%.3f",
+                                            key=f"csc::{system_mode}",
+                                            help="SrTiO₃ is a semiconductor, not a metal: a "
+                                                 "depletion/accumulation layer sits in series with "
+                                                 "the gap. 0 omits it (the original assumption). "
+                                                 "This is a lumped stand-in, not a Poisson solve "
+                                                 "with field-dependent ε.")
+        with qcol3:
+            layer2_n0 = st.number_input("Layer 2 Background n₀ (cm⁻²)",
+                                        0.0, 1e15, 2.7e13, 1e12, format="%.2e",
+                                        key=f"n0::{system_mode}",
+                                        help="Pre-existing carrier density in layer 2. Panel 4's "
+                                             "pocket radius is now k_F = √(4πn/g_sg_v) with "
+                                             "n = n₀ + ⟨Δn⟩, instead of a hardcoded 0.10 Å⁻¹. "
+                                             "The default reproduces that old radius; set 0 to "
+                                             "see the transferred charge alone.")
+        with qcol1:
+            layer2_cq = st.number_input(r"Layer 2 Quantum Capacitance $C_q$ (F/m²)",
+                                        value=float(cfg["cq"]), step=0.05, format="%.3f",
+                                        key=f"cq::{system_mode}",
+                                        help="Cq = e²g_s g_v m*/(2πħ²). Monolayer MoS₂ K valleys "
+                                             "(g_s=g_v=2, m*≈0.45 mₑ) give 0.60 F/m²; including the Q "
+                                             "valleys would give ~2.4 F/m². The geometric capacitance "
+                                             "ε₀/z is ≈0.026 F/m², so a realistic Cq leaves the interface "
+                                             "geometry-limited and preserves the moiré contrast in Δn.")
+
+        st.markdown("*Apparent-height weights of the three stacking registries (Panel 2):*")
+        rcol1, rcol2, rcol3 = st.columns(3)
+        with rcol1:
+            w_co = st.slider("Coincident weight", 0.0, 1.0, 1.0, 0.05)
+        with rcol2:
+            w_br = st.slider("Bridge weight", 0.0, 1.0, 0.4, 0.05)
+        with rcol3:
+            w_ho = st.slider("Hollow weight", 0.0, 1.0, 0.0, 0.05)
+        registry_weights = (w_co, w_br, w_ho)
+        st.caption("ℹ️ The topography previously used the coincident site alone, so Panel 2 showed "
+                   "a two-level contrast while Panel 1 resolved three registries. The ordering "
+                   "above is a modelling choice; set bridge and hollow to 0 for the old behaviour.")
+
+        smooth_len, k_vdw = 0.0, 400.0
+        elastic_operator = "Bending rigidity (∇⁴)"
         if relax_mode == "Continuum Mechanics (PDE Solver)":
             st.markdown("*Continuum Tuning Parameters (Determines spatial smoothness vs structural pinning):*")
             scol1, scol2 = st.columns(2)
             with scol1:
-                k_elastic = st.slider("Elastic Bending Rigidity (κ)", 0.0, 2.0, 0.5, 0.1)
+                smooth_len = st.slider("Elastic Smoothing Length ℓ (Å)", 0.0, 50.0, 3.0, 0.5,
+                                      help="Sets the elastic stiffness as κ = k_vdW·ℓ². The relaxed "
+                                           "gap is the template low-passed at q = 1/ℓ, so ℓ should be "
+                                           "compared with the moiré period. Replaces the old κ slider, "
+                                           "whose units were pixels (ℓ ≈ 0.7 Å, sub-grid).")
             with scol2:
-                k_vdw = st.slider(r"vdW Spring Stiffness ($k_{vdW}$)", 0.1, 5.0, 1.0, 0.1)
+                k_vdw = st.slider(r"vdW Spring Stiffness $k_{vdW}$ (meV/Å⁴)",
+                                  10.0, 2000.0, 400.0, 10.0,
+                                  help="Restoring force toward the geometric template. Now in "
+                                       "physical units, so it is directly comparable with the "
+                                       "electrostatic pressure ε₀ΔV²/2z². A vdW well of depth "
+                                       "~20 meV/Å² and width ~0.3 Å corresponds to ~400 meV/Å⁴. "
+                                       "It is still a Hookean spring to the template, not a vdW "
+                                       "potential with its own equilibrium.")
+            elastic_operator = st.selectbox("Elastic Operator:",
+                                            ["Bending rigidity (∇⁴)", "Membrane tension (∇²)"],
+                                            help="∇⁴ is the correct operator for a monolayer "
+                                                 "(response 1/(1+ℓ⁴k⁴)). ∇² is what the original "
+                                                 "+κ∇²z force actually corresponded to and is kept "
+                                                 "for comparison.")
 
         st.markdown("---")
         st.markdown("**3. Local Electron-Phonon Coupling Model**")
         ecol1, ecol2 = st.columns(2)
         with ecol1:
-            eph_g0 = st.number_input("Base Coupling at min gap (meV)", value=80.0, step=5.0)
+            eph_g0 = st.number_input("Base Coupling at min gap (meV)", value=80.0, step=5.0,
+                                     help="Energy scale of the interfacial mode. For FeSe/SrTiO₃ the "
+                                          "replica bands sit ~90-100 meV below the main bands.")
         with ecol2:
-            eph_decay = st.number_input(r"Evanescent Decay Length $\lambda$ (Å)",
-                                        value=0.5, step=0.1)
+            eph_q0 = st.number_input(r"Phonon In-Plane Wavevector $q_0$ (Å⁻¹)",
+                                     value=0.02, step=0.005, format="%.3f",
+                                     help="An interfacial polar phonon couples as exp(−q₀z), so the "
+                                          "decay length is 1/q₀. Forward-focused coupling (the FeSe/STO "
+                                          "replica-band regime) needs q₀/k_F ~ 0.1, i.e. q₀ ~ 0.02 Å⁻¹ "
+                                          "and 1/q₀ ~ 50 Å. Larger q₀ means zone-boundary phonons.")
+        st.caption("ℹ️ At small q₀ the coupling is almost uniform across the moiré — that flatness *is* "
+                   "forward focusing, not a bug. Note also that g(r) = g₀·exp(−q₀·z(r)) is a local "
+                   "approximation, valid only when the moiré period ≫ 1/q₀; in the forward-focused "
+                   "limit that condition is violated and the map should be read qualitatively.")
 
     if user_zmax < user_zmin:
         st.warning("Max gap is below min gap — swapping the two for this render.")
         user_zmin, user_zmax = user_zmax, user_zmin
-    if eph_decay <= 0:
-        st.warning("Evanescent decay length must be positive; using 0.1 Å.")
-        eph_decay = 0.1
+    if eph_q0 <= 0:
+        st.warning("Phonon wavevector must be positive; using 0.005 Å⁻¹.")
+        eph_q0 = 0.005
 
     plot_kwargs = dict(
         zoom_factor=zoom_factor, q_max=q_max, k_max=k_max, view_mode=view_mode,
@@ -1422,7 +1800,11 @@ def main():
         mid_panel_mode=mid_panel_mode, panel3_mode=panel3_mode, den_cmap=den_cmap,
         den_contrast=den_contrast, fft_scale=fft_scale, relax_mode=relax_mode,
         w1=w1, w2=w2, user_zmin=user_zmin, user_zmax=user_zmax,
-        k_elastic=k_elastic, k_vdw=k_vdw, eph_g0=eph_g0, eph_decay=eph_decay,
+        smooth_len=smooth_len, k_vdw=k_vdw, eph_g0=eph_g0, eph_q0=eph_q0,
+        layer2_cq=layer2_cq, scatter_model=scatter_model, mosaic_L=mosaic_L,
+        dilatational=dilatational, registry_weights=registry_weights,
+        substrate_csc=substrate_csc, layer2_n0=layer2_n0,
+        classify_mode=classify_mode, elastic_operator=elastic_operator,
         interfacial_state=interfacial_state, strain_coupling=strain_coupling,
     )
 

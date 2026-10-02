@@ -103,14 +103,14 @@ quasicrystalline component, and a measured I_replica/I_primary ratio in real STM
 data maps directly onto the coupling strength. [speculation] Whether that mapping
 survives a realistic tip-convolution and LDOS weighting is untested here.
 
-### A third, index-free criterion worth adding **[OPEN]**
+### A third, index-free criterion **[DONE]**
 
 Classify by **orbit under the point group** instead of by indices: apply the
 substrate mirror σ_φ to a spot and ask whether the image is also a spot of the same
 intensity. Replica-origin spots map onto primary-origin spots under σ; mixed
 umklapp spots map onto other mixed spots of the same order. This is independent of
 any index bookkeeping and therefore applies to measured data, where you have no
-index vectors. I have not implemented it — say the word and I will.
+index vectors. Implemented as `orbit_classify()`; see Part 5.
 
 ### What changed in the code
 
@@ -134,7 +134,7 @@ index vectors. I have not implemented it — say the word and I will.
 **The form is right.** Series geometric + quantum capacitance driven by the work
 function difference is the standard result for charge transfer across a vdW gap.
 
-**[OPEN — highest-impact numerical issue] The quantum capacitance is ~60× too
+**[DONE — was the highest-impact numerical issue] The quantum capacitance was ~60× too
 small.** The code hardcodes `Cq = 0.01 F/m²`. For monolayer MoS₂ with
 g_s = 2, g_v = 2 and m\* ≈ 0.45–0.48 m_e <cite index="14-1">(0.45 m₀ for the lower spin-split conduction band from GW calculations)</cite><cite index="16-1">(0.48 m_e, with g_s = g_v = 2, in first-principles mobility work)</cite>, Cq = e²g_sg_vm\*/(2πħ²) = **0.60 F/m²**; <cite index="13-1">an independent estimate gives ≈ 70 μF/cm² for n-type monolayer MoS₂</cite>, i.e. 0.70 F/m². Consequence, measured:
 
@@ -151,7 +151,7 @@ moiré contrast it is supposed to show. Recommendation: make Cq a per-system
 registry entry (MoS₂ ≈ 0.6 F/m², MATBG ≈ 0.002 F/m² is separately defensible since
 graphene's DOS vanishes at the Dirac point) and expose it in the UI.
 
-**[OPEN] SrTiO₃ is treated as a metal.** The series chain has only two elements.
+**[DONE/partial] SrTiO₃ was treated as a metal.** The series chain has only two elements.
 STO is a semiconductor with an enormous, field- and temperature-dependent
 permittivity, so a space-charge capacitance C_sc should sit in series with the gap
 capacitance, and it will dominate at low temperature. For your own MoS₂/STO system
@@ -160,7 +160,7 @@ substrate-depletion-dominated one. [speculation] I have not estimated the
 magnitude; doing so properly needs a Poisson solve in the STO with a
 field-dependent ε(E).
 
-**[OPEN] The interface dipole is missing.** Real vdW contacts show a push-back /
+**[OPEN] The interface dipole is still missing.** Real vdW contacts show a push-back /
 pillow dipole that partly screens ΔW, so the bare work-function difference
 overestimates transfer.
 
@@ -172,7 +172,7 @@ correctly give Δn ≡ 0.
 
 ### 2.2 Mechanical relaxation solver
 
-**[OPEN — real bug] The solver is zoom-dependent.** `ndimage.laplace()` returns a
+**[DONE — was a real bug] The solver was zoom-dependent.** `ndimage.laplace()` returns a
 *pixel* Laplacian; ∇²Z in Å⁻² is `laplace(Z)/dx²`, and dx = 2·FOV/512 changes by 5×
 across the zoom slider. The effective bending stiffness therefore changes by 25×
 while the physical system is unchanged. Measured on the same system, same κ = 0.5:
@@ -187,23 +187,24 @@ A 27 % change in the relaxed-gap spread purely from the field of view. Fix is on
 line — divide the Laplacian by dx² — but it rescales what κ means, so I left it
 for you to confirm.
 
-**[OPEN] "Elastic Bending Rigidity (κ)" is not a bending rigidity.** The force term
+**[DONE/partial] "Elastic Bending Rigidity (κ)" was not a bending rigidity.** The force term
 is +κ∇²Z, which is the variation of a *tension* energy ½σ|∇Z|². Bending rigidity
 would give −κ∇⁴Z (biharmonic). For a monolayer the bending term is the physically
 correct one at moiré wavelengths. Either relabel the slider "membrane tension" or
 implement the biharmonic operator.
 
-**[OPEN] "vdW Spring Stiffness" is not a vdW interaction.** `F_vdw = −k(Z − Z₀)` is
+**[DONE/partial] "vdW Spring Stiffness" is not a vdW interaction.** `F_vdw = −k(Z − Z₀)` is
 a Hookean restoring force toward the geometric template, so the equilibrium gap is
 whatever Z₀ says it is. There is no attractive −C/z⁴ pressure and no Pauli
 repulsion; the only thing preventing collapse under F_elec is this spring and the
 hard `clip(1.5, 5.0)`.
 
-**[NOTE] The electrostatic term has the right z-dependence.** F ∝ −1/z² is the
+**[DONE] The electrostatic term now has physical units as well as the right z-dependence.** F ∝ −1/z² is the
 correct fixed-potential capacitor pressure. Its prefactor 0.5(w₂−w₁)² has units of
 eV² and is used directly as a force in Å — an arbitrary scale, not a physical one.
 
-**[OPEN — small] Video frames use different physics from the interactive render.**
+**[DONE, as a side effect of the new solver] Video frames used different physics from
+the interactive render.**
 `iterations = 120 if is_video_frame else 50`. Measured effect is small but real,
 and it is converged by ~400:
 
@@ -216,19 +217,19 @@ and it is converged by ~400:
 
 Recommendation: one fixed count (400) for both, or a residual-based stop.
 
-**[NOTE] "Fast Proxy (Algebraic Shift)" adds no spatial physics.** It subtracts the
+**[DONE, documented in the UI] "Fast Proxy (Algebraic Shift)" adds no spatial physics.** It subtracts the
 constant 0.2(w₂−w₁)² from Z₀, so the doping and e-ph maps differ from rigid mode
 by a uniform offset only. At the default ΔW = 0.3 eV the shift is 0.018 Å.
 
-**[OPEN] `clip(Z, 1.5, 5.0)` is hardcoded** and silently overrides a user-set
+**[DONE] `clip(Z, 1.5, 5.0)` was hardcoded** and silently overrides a user-set
 `user_zmax` above 5 Å.
 
 ### 2.3 Electron–phonon coupling model
 
 `g(r) = g₀·exp(−(Z − user_zmin)/λ)`, λ default 0.5 Å.
 
-**[OPEN — most substantive physics issue] λ = 0.5 Å contradicts the picture the
-FeSe panel is built on.** For a remote interfacial polar phonon the coupling to a
+**[DONE — was the most substantive physics issue] λ = 0.5 Å contradicted the picture
+the FeSe panel is built on.** For a remote interfacial polar phonon the coupling to a
 mode of in-plane wavevector q falls off as e^(−qz), so the decay length is 1/q, not
 a universal constant. The FeSe/STO replica bands exist precisely because that
 coupling is forward-focused: <cite index="12-1">the replicas are complete copies of the main bands, which implies the responsible e-ph interaction is strongly peaked at small momentum transfer</cite>, and <cite index="10-1">the polar oxygen branch peaks at q = 0 with negligible coupling elsewhere</cite>. Quantitatively, <cite index="14-1">a ratio q₀/k_F ≈ 0.1 is required for replica bands to duplicate the primary bands without momentum smearing, with k_F ≈ 0.20 Å⁻¹</cite> — giving q₀ ≈ 0.02 Å⁻¹ and a decay length 1/q₀ ≈ **50 Å**, two orders of magnitude longer than the default. λ = 0.5 Å implies q ≈ 2 Å⁻¹, i.e. zone-boundary phonons, which would smear the replicas out entirely.
@@ -239,7 +240,7 @@ slider as q₀ (Å⁻¹) with λ = 1/q₀, default q₀ ≈ 0.02–0.05 Å⁻¹,
 that at fixed z this makes g nearly uniform — which is the physical content of
 forward focusing.
 
-**[OPEN] `g₀` is referenced to `user_zmin`, not to min(Z_map).** The label reads
+**[DONE] `g₀` was referenced to `user_zmin`, not to min(Z_map).** The label reads
 "Base Coupling at min gap", but after relaxation Z can fall below user_zmin, giving
 g > g₀. Reference it to the actual minimum of the relaxed map.
 
@@ -250,7 +251,7 @@ experimentally relevant quantity is either the phonon energy — <cite index="17
 
 ### 2.4 Misfit dislocation glass
 
-**[OPEN — physics] The displacement field is exactly solenoidal, so it carries no
+**[DONE] The displacement field was exactly solenoidal, so it carried no
 misfit strain.** `Ux = Σ −k_y sin(k·r+φ)`, `Uy = Σ +k_x sin(k·r+φ)` is
 u = ẑ × ∇ψ by construction. Measured on a 200 Å window:
 
@@ -265,7 +266,7 @@ mismatch. The dilatational part is the physics; the model has removed it.
 Recommendation: add a curl-free component u = ∇χ with the two amplitudes as
 separate controls, or build the field from a soft Frenkel–Kontorova ground state.
 
-**[OPEN] The mosaic wavelength is hardcoded at 120 Å**, independent of twist angle,
+**[DONE] The mosaic wavelength was hardcoded at 120 Å**, independent of twist angle,
 lattice mismatch and material. Physically the domain-wall spacing is set by the
 competition between interfacial adhesion and overlayer stiffness and tracks the
 moiré period. At twists where the moiré period is 40 Å the "glass" imposes an
@@ -275,7 +276,7 @@ unrelated 120 Å scale.
 with σ_k = 0.2 k₀ give a smooth random field; "Experimental Blobs" implies
 domains with walls. A soliton-like profile would need a nonlinear ground state.
 
-**[OPEN] The LEED treatment of disorder is not the structure factor of a disordered
+**[DONE] The LEED treatment of disorder was not the structure factor of a disordered
 lattice.** The glass branch blurs the *intensity* of the undisplaced overlayer with
 σ = 0.5 + 4·coupling pixels and scales it by an arbitrary ×3. Static random
 displacements should instead produce (i) Debye–Waller suppression
@@ -284,12 +285,12 @@ are suppressed far more — and (ii) a diffuse background carrying the lost weig
 A uniform blur does neither. Since the real-space displaced field already exists,
 FFT-ing it directly would be both simpler and correct.
 
-**[NOTE] Panel 2 and Panel 3 describe different disorder in glass mode.** Panel 2
+**[DONE] Panel 2 and Panel 3 described different disorder in glass mode.** Panel 2
 uses actually displaced atoms; Panel 3 uses undisplaced atoms plus a blur.
 
 ### 2.5 STM topography model
 
-**[OPEN] Only the coincident registry modulates the apparent height.**
+**[DONE] Only the coincident registry modulated the apparent height.**
 `A_i = 1 + 1.1·exp(−d_co²/2ξ²)`. The hollow and bridge distances are computed for
 Panel 1 and then discarded, so Panel 2 sees a two-level (coincident / not) contrast
 while Panel 1 shows three registries. Physically the apparent height is a function
@@ -310,7 +311,7 @@ anti-correlated by construction.
 
 ### 2.6 Scattering (LEED) engine
 
-**[OPEN] Double diffraction is gated by an unrelated control.** In the rigid state
+**[DONE] Double diffraction was gated by an unrelated control.** In the rigid state
 `T_fft_engine = T_sub + T_top` (independent kinematic scattering, no cross terms);
 in the QC state it becomes `T_sub × T_top` (which is what generates the umklapp
 satellites). But real LEED is multiple-scattering dominated and double-diffraction
@@ -323,16 +324,16 @@ the interfacial state.
 e^(iq_z d).** |FFT(density)|² is a cartoon of a kinematic pattern. Fine for the
 purpose; worth stating in the UI.
 
-**[NOTE] Nyquist cutoff at q = 4.02 Å⁻¹** (N_FFT = 512 over L = 400 Å) while the
+**[DONE] Nyquist cutoff was at q = 4.02 Å⁻¹** (N_FFT = 512 over L = 400 Å) while the
 q-Zoom slider reaches 8 Å⁻¹. Beyond ≈ 4 Å⁻¹ the map is blank but markers are still
 drawn. N_FFT = 1024 fixes it at ~4× the FFT cost.
 
 ### 2.7 Fermi surface panel (FeSe)
 
-**[NOTE] Pocket radii are hardcoded**: r_FeSe = 0.175 Å⁻¹, r_MoS₂ = 0.10 Å⁻¹.
+**[DONE] Pocket radii were hardcoded**: r_FeSe = 0.175 Å⁻¹, r_MoS₂ = 0.10 Å⁻¹.
 The FeSe value is close to <cite index="14-1">k_F ≈ 0.20 Å⁻¹</cite>. The MoS₂ value corresponds to n ≈ 3×10¹³ cm⁻² for g_s g_v = 4 — plausible for a gated monolayer, but it is not tied to the Δn the doping panel computes. Linking them would make the two panels mutually consistent.
 
-**[NOTE] FeSe M pockets are drawn as circles**; they are elliptical in reality.
+**[DONE] FeSe M pockets were drawn as circles**; they are elliptical in reality.
 **[NOTE] No Γ hole pocket** — which is *correct* for 1 ML FeSe/STO, where the hole
 band sinks below E_F. Worth a comment in the code so it is not "fixed" later.
 
@@ -342,21 +343,297 @@ band sinks below E_F. Worth a comment in the code so it is not "fixed" later.
 
 If we resume, this is the queue. Nothing below has been changed.
 
-1. **Cq per system, realistic value** (2.1) — biggest single improvement to the
-   doping panel; small, safe edit.
-2. **Divide the Laplacian by dx²** (2.2) — removes zoom-dependent physics;
-   one line, but rescales κ.
-3. **Reparametrise λ as 1/q₀ for the e-ph panel** (2.3) — makes the coupling model
-   consistent with the forward-scattering picture the FeSe panel assumes.
-4. **Fixed iteration count for the relaxation solver** (2.2).
-5. **Add a dilatational component to the glass field** (2.4) — the largest physics
-   gap, and the most work.
-6. **Debye–Waller + diffuse scattering for glass mode in LEED** (2.4).
-7. **Decouple the sum/product LEED switch from the interfacial state** (2.6).
-8. **Registry-resolved STM contrast** (2.5).
-9. **Point-group orbit classifier** (Part 1) — index-free, works on measured data.
-10. **N_FFT = 1024** (2.6).
-11. **Tie the Panel 4 pocket radii to the computed Δn** (2.7).
+~~1. Cq per system~~ · ~~2. Laplacian units~~ · ~~3. λ → 1/q₀~~ · ~~4. iteration count~~
+— **all four completed**, see Part 4 below.
 
-Items 1–4 and 7 are small and independent. Items 5, 6 and 9 are genuine modelling
-work and should be scoped separately.
+~~5. dilatational glass component~~ · ~~6. real glass structure factor~~ ·
+~~7. decouple the LEED sum/product switch~~ · ~~8. registry-resolved STM contrast~~ ·
+~~9. point-group orbit classifier~~ · ~~10. N_FFT = 1024~~ ·
+~~11. pocket radii from Δn~~ — **all completed**, see Part 5.
+
+What remains genuinely open is listed at the end of Part 5.
+
+---
+
+# Part 4 — Items 1–3 implemented (and 4 with them)
+
+## Item 1 — Quantum capacitance **[DONE]**
+
+`Cq` moved into the registry as named constants (`CQ_MOS2 = 0.60 F/m²` for every
+MoS₂ overlayer, `CQ_GRAPHENE_DIRAC = 0.002` for MATBG) and exposed as a
+system-scoped UI field so you can override it. Measured effect on the Δn map
+(STO(100), θ = 17.2°, ΔW = 0.3 eV, unrelaxed gap 3.1–3.6 Å):
+
+```
+  Cq = 0.01  (old hardcoded)   Δn = 1.33e12 .. 1.39e12 cm⁻²   contrast  4.0 %
+  Cq = 0.60  (MoS₂ K valleys)  Δn = 4.42e12 .. 5.11e12 cm⁻²   contrast 13.3 %
+  Cq = 2.41  (incl. Q valleys) Δn = 4.56e12 .. 5.29e12 cm⁻²   contrast 13.7 %
+```
+
+So the correction raises the absolute doping level by 3.7× and the moiré contrast
+by 3.3×. The near-identity of the 0.60 and 2.41 rows confirms the interface is now
+geometry-limited, which is the regime it should be in: beyond Cq ≈ 0.6 F/m² the
+answer stops depending on Cq at all.
+
+## Item 2 — Relaxation solver **[DONE, but not the one-line version]**
+
+I tried the one-line fix from the audit first and it does not stand up. Dividing
+`ndimage.laplace` by dx² inside the existing explicit Euler loop gives:
+
+```
+  zoom 1× κ = 0.5:  lr·λ_max = 1.37   (explicit stability limit is 2)
+  zoom 1× κ = 2.0:  lr·λ_max = 1.56
+```
+
+— marginally stable at the smallest field of view, and in the regime where it *is*
+stable the implied smoothing length √(κ/k_vdW) = 0.7 Å is **below the grid spacing**,
+so the elastic term was never doing anything physical in the first place.
+
+Replaced with a semi-implicit **spectral** solver. The linear part inverts exactly,
+
+&nbsp;&nbsp;&nbsp;&nbsp;`z(k) = [ z₀(k) − S(k)/k_vdW ] / ( 1 + ℓ²k² )`,  ℓ² = κ/k_vdW,
+
+a Lorentzian low-pass of half-power wavevector 1/ℓ; only the nonlinear
+electrostatic source S(z) = A/z² is iterated. Consequences, all measured:
+
+- **Converged, not partially relaxed.** Identical gap spread at 12, 60 and 300
+  iterations (0.02007 Å at every count). This also retires item 4 — there is no
+  longer a 50-vs-120 iteration discrepancy between the interactive render and the
+  video, because the answer no longer depends on the count.
+- **Zoom dependence down from 27 % to ~10 %**, and the residual is now how well a
+  512² grid samples the moiré, not the operator. (Was 0.4915 / 0.4336 / 0.3594 Å
+  at 1× / 3× / 5×; now 0.0440 / 0.0380 / 0.0408 Å.)
+- **ℓ actually controls what it says it controls**: spread 0.501 Å at ℓ = 0,
+  0.058 Å at ℓ = 2 Å, 0.019 Å at ℓ = 5 Å, 0.0013 Å at ℓ = 50 Å.
+- **Unconditionally stable**, so no CFL constraint on the step.
+- Cost ≈ 0.2–0.7 s.
+
+The κ slider is relabelled **"Elastic Smoothing Length ℓ (Å)"** (default 3.0 Å),
+which is the dimensionally meaningful control: what matters is ℓ against the moiré
+period, not an abstract stiffness. The variable is renamed `smooth_len` throughout.
+
+**Reflect padding added.** The spectral solve assumes periodic boundaries, which
+the field of view does not obey. Measured error from omitting the pad: 21.9 mÅ at
+ℓ = 1 Å, 5.1 mÅ at ℓ = 3 Å, 0.2 mÅ at ℓ = 50 Å — it matters most at *small* ℓ
+(sharp corrugation mismatching across the wrap), and at the default it is
+comparable to the interior signal (σ ≈ 3.3 mÅ). Cost ≈ 0.1 s.
+
+**Caution when reading the relaxed map.** A correct elastic term is a strong
+low-pass: a monolayer cannot follow 3 Å corrugation, so the relaxed gap range
+collapses from [3.10, 3.60] Å to roughly [3.22, 3.25] Å at ℓ = 3 Å. That is the
+physical answer, but it means the doping and e-ph panels show much less spatial
+contrast in continuum mode than they used to. Separately: at twists where the
+moiré period approaches the field of view — at θ = 17.2° it is |L₁| = 176 Å,
+|L₂| = 195 Å in a 240 Å window — the long-wavelength structure in the map that
+looks like an edge or frame artefact is **one moiré cell**, not an artefact.
+
+**Still open from §2.2:** the force is still +κ∇²z (membrane tension), not −κ∇⁴z
+(true bending rigidity); `F_vdW` is still a Hookean spring to the template rather
+than a vdW potential; and A_elec = ½(w₂−w₁)² is still an arbitrary scale with
+units of eV².
+
+## Item 3 — Electron–phonon coupling **[DONE]**
+
+`g(r) = g₀·exp(−λ⁻¹(z − user_zmin))` → `g(r) = g₀·exp(−q₀·(z − min z))`. The slider
+is now the phonon in-plane wavevector q₀ (Å⁻¹, default 0.02), because an
+interfacial polar mode couples as exp(−qz) and the decay length is 1/q₀, not a free
+parameter. The reference is the actual minimum of the relaxed map, so "coupling at
+the minimum gap" is true after relaxation too. Panel 2's title reports 1/q₀ and the
+resulting spatial contrast.
+
+```
+  q₀ = 2.0  Å⁻¹ (old default, 1/q₀ = 0.5 Å)   g spans  36.8 % .. 100 %  → contrast 63.2 %
+  q₀ = 0.2  Å⁻¹ (1/q₀ = 5 Å)                  g spans  90.5 % .. 100 %  → contrast  9.5 %
+  q₀ = 0.02 Å⁻¹ (1/q₀ = 50 Å, replica regime) g spans  99.0 % .. 100 %  → contrast  1.0 %
+```
+
+The forward-focused regime gives an almost uniform g — that flatness *is* the
+physics, and the old 63 % contrast was an artefact of a decay length two orders of
+magnitude too short. A UI caption says so, and also flags the real caveat: writing
+g(r) = g₀exp(−q₀z(r)) is a *local* approximation valid only when the moiré period
+≫ 1/q₀, and in the forward-focused limit that condition is violated. The map
+should be read qualitatively there.
+
+## Verification
+
+59 render configurations (8 systems × 3 interfacial states, plus 3 middle-panel
+metrics × 3 relaxation models × 3 zooms, plus 8 edge cases: ℓ = 0, ℓ = 50,
+q₀ = 0.005, q₀ = 2, Cq = 2.41, Cq = 0.002, equal work functions, zero-width gap)
+render with no error and no numerical warning.
+
+---
+
+# Part 5 — Items 5–11 and the remaining §2 sub-items
+
+## Item 7 — Double diffraction decoupled **[DONE]**
+
+New `combine_layers()` and a UI control **"Scattering Model"** with two options.
+Summing the layer densities is single kinematic scattering; multiplying them is
+double diffraction, which is what generates the umklapp satellites. Previously the
+product was reachable *only* by selecting an interfacial phase state, so an
+unrelated setting decided whether double diffraction existed. Measured:
+
+```
+  Kinematic (single scattering)   I(G₁+G₂)/I(G₁) = 8.9e-14   (i.e. absent)
+  Include double diffraction      I(G₁+G₂)/I(G₁) = 3.4e-02
+```
+
+Default is "Include double diffraction", because real LEED is multiple-scattering
+dominated and these spots are routine for any incommensurate overlayer.
+
+## Item 10 — FFT grid **[DONE]**
+
+`N_FFT` 512 → 1024. Nyquist q = πN/L goes from 4.02 to 8.04 Å⁻¹, which now covers
+the whole q-Zoom slider range; beyond 4 Å⁻¹ the map used to be blank while markers
+were still drawn. Cost: ~0.09 s per density evaluation, ~0.04 s per FFT.
+
+## Item 5 — Glass field gains a dilatational component **[DONE]**
+
+`u = (1−f)·u_sol + f·u_dil` with `u_sol = Σ(−k_y,k_x)sin`, `u_dil = Σ(k_x,k_y)sin`,
+and a new **"Dilatational Fraction"** slider. Measured:
+
+```
+  f = 0.0   rms div 7.6e-06   rms curl 2.2e-02   (the old model: no area change)
+  f = 0.5   rms div 1.6e-02   rms curl 1.6e-02
+  f = 1.0   rms div 2.2e-02   rms curl 7.6e-06
+```
+
+The **mosaic wavelength** is no longer hardcoded at 120 Å: it defaults to the moiré
+period computed for the current twist and system, with a UI override. This is the
+scale that actually sets domain size in a relaxed incommensurate contact.
+
+## Item 6 — Real structure factor for glass scattering **[DONE]**
+
+The blur-the-intensity hack (Gaussian σ = 0.5 + 4·coupling px, times an arbitrary
+×3) is gone. The scattering engine now transforms the **actually displaced**
+density, `get_hex_density(a, X−u_x, Y−u_y, θ)`. This also removes the
+Panel 2 / Panel 3 inconsistency: both now describe the same disorder realisation.
+
+The emergent behaviour is **not** textbook Debye–Waller, and that turns out to be
+the correct answer. Measured Bragg weight against the uncorrelated-disorder
+prediction exp(−G²⟨u²⟩/2):
+
+```
+  coupling   √⟨u²⟩    I(G_top) measured   exp(−G²⟨u²⟩/2)   I(G_sub)
+     0.2     0.113         0.9955             0.9664        1.0000
+     0.4     0.227         0.9820             0.8724        1.0000
+     0.8     0.454         0.9271             0.5792        1.0000
+```
+
+The measured suppression is much weaker than the DW formula because the
+displacement is **correlated over the mosaic length**: a slowly varying u(r)
+locally shifts the lattice rather than disordering it, so the peak *broadens*
+instead of losing weight. That is exactly what the measurement shows, and the
+broadening scales correctly with both the coupling and the mosaic length:
+
+```
+  mosaic L   coupling   σ_q overlayer   σ_q substrate   apparent coherence length
+    120 Å      0.0        0.0128           0.0128              78 Å  (window limit)
+    120 Å      0.4        0.0198           0.0128              51 Å
+    120 Å      0.8        0.0328           0.0128              31 Å
+     40 Å      0.4        0.0561           0.0128              18 Å
+     40 Å      0.8        0.1084           0.0128               9 Å
+```
+
+The undisplaced substrate peaks are untouched throughout — a clean internal
+control. So the old blur was crudely mimicking mosaic broadening; it is now
+emergent, quantitative, and correctly confined to the displaced layer.
+
+**Caveat worth knowing:** |G|-dependence cannot be probed inside this density
+model. `get_hex_density` is a three-cosine sum, band-limited to the first shell,
+so there is no 2G or 3G baseline to suppress. Adding atomic form factors (§2.6,
+still open) would populate higher shells and make the |G|-dependence testable.
+
+## Item 8 — Registry-resolved STM contrast **[DONE]**
+
+The apparent height is now `1 + A_M·(w_co·s_co + w_br·s_br + w_ho·s_ho)` with the
+three weights exposed as sliders (defaults 1.0 / 0.4 / 0.0). Previously only the
+coincident site entered, so Panel 2 showed a two-level contrast while Panel 1
+resolved three registries. The hardcoded `XI_STACK = 0.6 Å` is also gone: the
+contrast now uses the *same* registry decay widths as Panel 1 (0.98 Å for STO), so
+the two panels no longer disagree about the domain size. Setting bridge and hollow
+to 0 recovers the old behaviour. **The 1.0 / 0.4 / 0.0 ordering is a modelling
+choice, not a derived result** — the true stacking-energy ordering is
+system-specific.
+
+## Item 11 — Fermi pockets tied to the carrier density **[DONE]**
+
+`r_top` was a hardcoded 0.10 Å⁻¹ with no link to the doping panel. It is now
+k_F = √(4πn/g_sg_v) with n = n₀ + ⟨Δn⟩, where n₀ is a new UI field. Panel 4's title
+reports n and k_F. The default n₀ = 2.7e13 cm⁻² reproduces the old radius; set it
+to 0 to see the transferred charge alone — which gives k_F ≈ 0.04 Å⁻¹, i.e. the
+old hardcoded pocket was ~6× too large relative to what the doping model computes.
+FeSe M pockets are now drawn as **ellipses** (aspect 1.8, major axis along Γ–M)
+rather than circles.
+
+## Item 9 — Point-group orbit classifier **[DONE]**
+
+`orbit_classify()` plus a UI selector **"Umklapp Classification"**. Instead of index
+vectors it asks, for each spot and each substrate mirror: *is σ(q) also a spot of
+comparable intensity?* Labels are `invariant` (q lies on the mirror line),
+`paired` (mirror-related doublet — the replica signature), and `unpaired`
+(mirror-breaking — the umklapp signature). It takes an `intensity_of` callable, so
+the identical routine runs on a simulated map or on a measured FFT.
+
+## Remaining §2 sub-items
+
+**[DONE/partial] Substrate space-charge capacitance** (§2.1). `carrier_density()`
+now accepts an optional `C_sc` in series, exposed in the UI (default 0 = omitted,
+the original metallic assumption). This is a **lumped stand-in, not a Poisson
+solve** with SrTiO₃'s field- and temperature-dependent permittivity, which is what
+the problem really needs.
+
+**[DONE] Electrostatic term in physical units** (§2.2). `A_elec = 0.5(w₂−w₁)²`
+(units of eV², used directly as a force) → `K_ELEC·(w₂−w₁)²` with
+K_ELEC = 62.42·ε₀/2e-10 = 2.764 meV/Å per V², derived from the fixed-potential
+capacitor pressure ε₀ΔV²/2z². `k_vdW` is correspondingly now in meV/Å⁴ (default
+400, corresponding to a vdW well ~20 meV/Å² deep and ~0.3 Å wide), so the two
+terms are finally comparable on the same footing. The consequence is that the
+electrostatic pull is **tiny** against a realistic vdW stiffness — which is the
+honest answer, and was hidden before by the arbitrary scales.
+
+**[DONE] Bending vs tension operator** (§2.2). New "Elastic Operator" selector.
+`Bending rigidity (∇⁴)` gives response 1/(1+ℓ⁴k⁴) and is the physically correct
+operator for a monolayer; it is the default. `Membrane tension (∇²)` gives
+1/(1+ℓ²k²) and is what the original +κ∇²z force actually corresponded to, kept for
+comparison.
+
+**[DONE] `clip(Z, 1.5, 5.0)`** no longer silently overrides a user-set gap: the
+ceiling is `max(5.0, user_zmax + 1)`.
+
+**[DONE] The `ΔW = 1e-6` fudge is now actually removed.** Part 2 claimed this was
+done in the first pass; it was not — the line was still in the doping branch. Equal
+work functions now correctly give zero charge transfer, with `safe_limits()`
+handling the colourbar.
+
+## Still genuinely open
+
+1. **Interface dipole** (§2.1) — the push-back/pillow dipole screens ΔW; the model
+   still uses the bare work-function difference.
+2. **A real Poisson solve in the substrate** (§2.1) rather than the lumped C_sc.
+3. **`F_vdW` is still a Hookean spring to the geometric template** (§2.2), not a
+   vdW potential with its own equilibrium separation. The equilibrium gap is still
+   whatever Z₀ says it is.
+4. **No atomic form factors, no interlayer phase factor e^(iq_z d)** (§2.6). This
+   is also what blocks the |G|-dependence test in item 6.
+5. **The STM model is a constant-height LDOS proxy**, not Tersoff–Hamann with a
+   bias and tip state (§2.5).
+6. **Z₀ = f(T_sub·T_top) is a modelling choice with no derivation** (§2.5), and it
+   makes the Geometry and Doping panels anti-correlated by construction.
+7. **The glass field is still band-limited Gaussian noise**, not a domain structure
+   with walls (§2.4). A soliton-like profile needs a nonlinear (Frenkel–Kontorova)
+   ground state rather than a random superposition.
+8. **Registry weights (1.0 / 0.4 / 0.0) and the FeSe ellipticity (1.8) are
+   stipulated**, not derived.
+
+Items 1–4 are tractable. Items 5–8 are modelling decisions that need input from
+what you actually want the panels to represent.
+
+## Verification
+
+66 render configurations: 8 systems × 3 interfacial states; 3 middle-panel metrics
+× 3 relaxation models × 2 scattering models; 2 classification modes × 2 Panel-3
+modes × 3 interfacial states; and 12 edge cases (dilatational 0 and 1, mosaic 10 Å
+and 1000 Å, C_sc on, n₀ = 0, registry weights all-0 and all-1, tension operator,
+equal work functions, q-Zoom 8 Å⁻¹, 5× zoom in glass mode). All render with no
+error and no numerical warning.

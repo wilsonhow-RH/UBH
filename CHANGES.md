@@ -222,3 +222,38 @@ See `PHYSICS_AUDIT.md` Part 1 for the scheme, the measured intensity-vs-class
 table that validates it, and the ambiguity measurements. Part 2 of that document
 is a module-by-module physics audit with evidence; Part 3 is a prioritized queue of
 what is still open.
+
+---
+
+# Update 4 — audit items 1–3 (and 4) implemented
+
+- **Cq** moved to registry constants (MoS₂ 0.60 F/m², MATBG 0.002 F/m²) and exposed
+  in the UI. Δn contrast improves 3.3×, absolute level 3.7×.
+- **Relaxation solver** replaced with a semi-implicit spectral scheme. The κ slider
+  becomes "Elastic Smoothing Length ℓ (Å)". Zoom dependence 27 % → ~10 %, exactly
+  converged, unconditionally stable, reflect-padded boundaries. Retires item 4.
+- **e-ph coupling** reparametrised from a bare decay length λ to the phonon
+  wavevector q₀, with g₀ referenced to the actual relaxed minimum gap.
+
+Measurements and the remaining open items are in `PHYSICS_AUDIT.md` Part 4.
+
+---
+
+# Update 5 — audit items 5–11 and the remaining §2 sub-items
+
+New UI controls: **Scattering Model** (kinematic vs double diffraction),
+**Umklapp Classification** (index-based vs point-group orbit), **Dilatational
+Fraction** and **Mosaic Wavelength** (glass mode), **Elastic Operator** (∇⁴ vs ∇²),
+**Substrate Space-Charge C_sc**, **Layer 2 Background n₀**, and three
+**registry apparent-height weights**.
+
+Physics changes: real structure factor for glass scattering (replaces the
+intensity blur); dilatational component in the misfit field; mosaic scale tied to
+the moiré period; `N_FFT` 512 → 1024; registry-resolved STM contrast sharing
+Panel 1's decay widths; Fermi pockets derived from n₀ + ⟨Δn⟩ and drawn elliptical
+for FeSe; electrostatic term and `k_vdW` in physical units (meV/Å³, meV/Å⁴);
+bending rigidity as the default elastic operator; the `ΔW = 1e-6` fudge actually
+removed this time.
+
+Measurements for each, and the eight items that remain genuinely open, are in
+`PHYSICS_AUDIT.md` Part 5.
